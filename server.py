@@ -176,6 +176,98 @@ async def save_script(request: Request):
     return {"ok": True, "lines": len([l for l in text.splitlines() if l.strip()])}
 
 
+@app.post("/api/script/analyze")
+async def analyze_script(request: Request):
+    data = await request.json()
+    text = data.get("text", "")
+    if not text:
+        return {"ok": True, "text": ""}
+        
+    lines = text.splitlines()
+    analyzed_lines = []
+    
+    use_gemini = False
+    gemini_key = getattr(config, "GEMINI_API_KEY", "")
+    if gemini_key and gemini_key.strip():
+        use_gemini = True
+
+    if use_gemini:
+        import requests
+        prompt = (
+            "You are a professional audio drama and audiobook script director. "
+            "Your task is to take this script and enhance it by injecting appropriate tags "
+            "for Kokoro TTS at the start of each line where a mood changes or a voice switches.\n\n"
+            "Rules:\n"
+            "- Available voice overrides: [voice:af_sarah], [voice:af_bella], [voice:af_heart], "
+            "[voice:am_adam], [voice:am_michael], [voice:bf_emma], [voice:bm_george]\n"
+            "- Available emotion overrides: [emotion:Simmering Anger] (for rage/heat), "
+            "[emotion:Cinematic Narrative] (standard narration), [emotion:Whispered Suspense] (fear/secrecy/night), "
+            "[emotion:Cold Precision] (flatness/precision), [emotion:Raw Vulnerability] (sorrow/pain), "
+            "[emotion:Urgent Excitement] (energy), [emotion:Empowered Resolution] (confidence), "
+            "[emotion:Bitter Sarcasm] (irony)\n"
+            "- Keep spacing clean. Inject tags at the very start of lines where appropriate.\n"
+            "- Do not add metadata, titles, or formatting wrapper text. Output ONLY the updated script text exactly.\n\n"
+            f"Script:\n{text}"
+        )
+        
+        try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={gemini_key}"
+            payload = {
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {"temperature": 0.2}
+            }
+            res = requests.post(url, json=payload, timeout=15)
+            res_data = res.json()
+            ai_text = res_data["candidates"][0]["content"]["parts"][0]["text"].strip()
+            if ai_text.startswith("```"):
+                ai_text = "\n".join([line for line in ai_text.splitlines() if not line.startswith("```")])
+            return {"ok": True, "text": ai_text, "mode": "ai"}
+        except Exception as e:
+            print(f"Gemini script analysis error: {e}")
+
+    # Fallback to pure offline rule-based heuristics
+    import re
+    default_voices = ["af_sarah", "am_adam", "af_bella", "bm_george"]
+    voice_idx = 0
+    
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            analyzed_lines.append("")
+            continue
+            
+        if stripped.startswith("[voice:") or stripped.startswith("[emotion:"):
+            analyzed_lines.append(line)
+            continue
+            
+        injected_tags = []
+        
+        # Heuristics
+        if re.search(r"\b(rage|hate|angry|betray|lie|lied|fake|enemy|scoundrel)\b", stripped, re.IGNORECASE):
+            injected_tags.append("[emotion:Simmering Anger]")
+        elif re.search(r"\b(quiet|silent|whisper|shadow|dark|night|breath|creepy|haunt|scared)\b", stripped, re.IGNORECASE):
+            injected_tags.append("[emotion:Whispered Suspense]")
+        elif re.search(r"\b(cry|weep|hurt|pain|sad|lost|tears|broken|alone|grief|sorrow)\b", stripped, re.IGNORECASE):
+            injected_tags.append("[emotion:Raw Vulnerability]")
+        elif re.search(r"\b(run|fast|excited|hurry|victory|win|shout|yes|great|awesome)\b", stripped, re.IGNORECASE):
+            injected_tags.append("[emotion:Urgent Excitement]")
+        elif re.search(r"\b(clinical|flat|dead|cold|calculation|math|science|fact)\b", stripped, re.IGNORECASE):
+            injected_tags.append("[emotion:Cold Precision]")
+        else:
+            if len(stripped.split()) > 10:
+                injected_tags.append("[emotion:Cinematic Narrative]")
+                
+        if "[voice:" not in line:
+            current_voice = default_voices[voice_idx % len(default_voices)]
+            injected_tags.insert(0, f"[voice:{current_voice}]")
+            voice_idx += 1
+            
+        joined_tags = " ".join(injected_tags)
+        analyzed_lines.append(f"{joined_tags} {stripped}")
+        
+    return {"ok": True, "text": "\n".join(analyzed_lines), "mode": "rules"}
+
+
 # ── Routes: Reference voice ─────────────────────────────────
 
 

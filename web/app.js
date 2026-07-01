@@ -17,6 +17,7 @@ const DOM = {
     chunkCounter:     $('#chunk-counter'),
     wordCounter:      $('#word-counter'),
     btnSaveScript:    $('#btn-save-script'),
+    btnAnalyzeScript: $('#btn-analyze-script'),
     tagButtons:       $$('.tag-insert'),
 
     // Voice Preset
@@ -275,6 +276,29 @@ async function saveScriptData() {
         updateMetadataStats();
     } else {
         showToast('Error saving script', 'err');
+    }
+}
+
+async function analyzeScriptData() {
+    DOM.btnAnalyzeScript.disabled = true;
+    DOM.btnAnalyzeScript.textContent = '🔍 Analyzing...';
+    
+    try {
+        const data = await apiPost('/api/script/analyze', { text: DOM.editor.value });
+        if (data && data.ok) {
+            DOM.editor.value = data.text;
+            updateGutter();
+            updateMetadataStats();
+            const modeLabel = data.mode === 'ai' ? 'AI Director Mode' : 'Local Rules';
+            showToast(`Script auto-directed successfully (${modeLabel})`, 'ok');
+        } else {
+            showToast('Error analyzing script', 'err');
+        }
+    } catch (e) {
+        showToast('Error connecting to script analyzer', 'err');
+    } finally {
+        DOM.btnAnalyzeScript.disabled = false;
+        DOM.btnAnalyzeScript.textContent = '🎨 Auto-Direct Script';
     }
 }
 
@@ -737,6 +761,7 @@ function showToast(message, type = '') {
 function setupEventListeners() {
     // Save hotkey trigger
     DOM.btnSaveScript.addEventListener('click', saveScriptData);
+    DOM.btnAnalyzeScript.addEventListener('click', analyzeScriptData);
     document.addEventListener('keydown', (e) => {
         if ((e.metaKey || e.ctrlKey) && e.key === 's') {
             e.preventDefault();
