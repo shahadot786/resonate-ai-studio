@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.venv_old/
+
+# Models (large binary files)
+models/
+
+# Generated audio
+outputs/
+voice_tests/
+tmp_*/
+temp_*/
+
+# Reference audio (optional — uncomment to track)
+# ref/
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+*.swp

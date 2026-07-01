@@ -1,0 +1,1 @@
+# core — Narrator shared library
