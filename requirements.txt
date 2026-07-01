@@ -1,0 +1,16 @@
+# ============================================================
+# Narrator — Python dependencies
+# ============================================================
+
+# TTS engine (lightweight high-quality Kokoro ONNX model)
+kokoro-onnx>=0.4.0
+onnxruntime>=1.16.0
+soundfile>=0.12.0
+
+# Web server
+fastapi>=0.110.0
+uvicorn>=0.29.0
+python-multipart>=0.0.9
+
+# Video B-Roll pipeline
+requests>=2.31.0

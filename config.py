@@ -3,10 +3,10 @@
 # ============================================================
 
 # ── Model ─────────────────────────────────────────────────────
-MODEL_PATH = "models/1.7B-CustomVoice"
+MODEL_PATH = "models/kokoro/kokoro-v1.0.onnx"
 
 # ── Voice ─────────────────────────────────────────────────────
-VOICE = "aiden"
+VOICE = "af_sarah"
 
 # ── Reference audio for voice cloning ─────────────────────────
 REF_AUDIO = "ref/ref_voice_male.wav"
@@ -42,15 +42,19 @@ SERVER_PORT = 8000
 
 # ── All available voices ─────────────────────────────────────
 VOICES = [
-    "aiden",
-    "ryan",
-    "eric",
-    "dylan",
-    "serena",
-    "vivian",
-    "ono_anna",
-    "sohee",
-    "uncle_fu",
+    "af_sarah",
+    "af_bella",
+    "af_heart",
+    "af_nicole",
+    "af_sky",
+    "am_adam",
+    "am_michael",
+    "am_fenrir",
+    "am_puck",
+    "bf_emma",
+    "bf_isabella",
+    "bm_george",
+    "bm_lewis",
 ]
 
 # ── B-Roll Video Pipeline ────────────────────────────────────

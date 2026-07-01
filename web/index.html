@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Narrator — Production AI Voice Studio</title>
-    <meta name="description" content="Local production-grade AI narration studio powered by Qwen3-TTS.">
+    <meta name="description" content="Local production-grade AI narration studio powered by Kokoro-82M.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;450;500;650;750&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -32,10 +32,33 @@
             </div>
 
             <div class="sidebar-scrollable-content">
+
+                <!-- ── Card: Pipeline Mode ── -->
+                <div class="sidebar-card card-mode">
+                    <div class="card-headline">⚙️ Pipeline Mode</div>
+                    <div class="mode-selector" id="mode-selector">
+                        <button class="mode-btn" data-mode="audio" id="mode-audio">
+                            <span class="mode-icon">🎙</span>
+                            <span class="mode-label">Audio Only</span>
+                        </button>
+                        <button class="mode-btn active" data-mode="both" id="mode-both">
+                            <span class="mode-icon">✨</span>
+                            <span class="mode-label">Both</span>
+                        </button>
+                        <button class="mode-btn" data-mode="video" id="mode-video">
+                            <span class="mode-icon">🎬</span>
+                            <span class="mode-label">Video Only</span>
+                        </button>
+                    </div>
+                    <p class="mode-hint" id="mode-hint">Generates audio then automatically creates B-Roll video.</p>
+                </div>
                 
-                <!-- Card: Voice Preset -->
-                <div class="sidebar-card">
-                    <div class="card-headline">Voice Settings</div>
+                <!-- Card: Voice Settings -->
+                <div class="sidebar-card" id="card-voice-settings">
+                    <div class="card-headline">
+                        Studio Voice Settings
+                        <span class="engine-badge">Kokoro</span>
+                    </div>
                     <div class="control-group">
                         <label for="select-voice">Active Narrator</label>
                         <select id="select-voice"></select>
@@ -47,8 +70,8 @@
                 </div>
 
                 <!-- Card: Reference voice -->
-                <div class="sidebar-card">
-                    <div class="card-headline">Voice Cloning</div>
+                <div class="sidebar-card" id="card-voice-cloning">
+                    <div class="card-headline">Voice Cloning / Profile Reference</div>
                     <div class="control-group">
                         <label for="select-ref">Reference Profile</label>
                         <div class="select-row">
@@ -67,7 +90,7 @@
                 </div>
 
                 <!-- Card: Emotion Presets -->
-                <div class="sidebar-card">
+                <div class="sidebar-card" id="card-emotion">
                     <div class="card-headline">Emotional Arc &amp; Directions</div>
                     <div class="control-group">
                         <label for="select-emotion-preset">Narrator Presets</label>
@@ -80,7 +103,7 @@
                             </optgroup>
                             <optgroup label="Betrayal &amp; Deep Emotion">
                                 <option value="Start calm and trusting, then let disbelief creep in. Build to a moment of stunned silence. Let the hurt land quietly, not loudly. End with a hollow, empty resolve.">💔 Betrayal Discovery</option>
-                                <option value="Controlled anger simmering beneath every word. Speak with precision and restraint. Each sentence is measured, deliberate. The quietness is more terrifying than shouting.">🔥 Quiet Rage</option>
+                               :// Controlled anger simmering beneath every word. Speak with precision and restraint. Each sentence is measured, deliberate. The quietness is more terrifying than shouting.
                                 <option value="Vulnerable, raw, and exposed. Voice slightly unsteady. Pauses where words fail. Genuine emotional weight without melodrama. Let silence carry meaning.">😢 Raw Vulnerability</option>
                                 <option value="Bitter and sardonic. Speak with a knowing smile. Every compliment is laced with irony. The humor is a shield against deeper pain.">😏 Bitter Sarcasm</option>
                                 <option value="Resigned and exhausted. Speak as if you've already accepted the worst. No energy left for anger. Just a tired, hollow truth.">😶 Numb Resignation</option>
@@ -101,7 +124,7 @@
                 </div>
 
                 <!-- Card: Audio Pipeline -->
-                <div class="sidebar-card">
+                <div class="sidebar-card" id="card-audio-pipeline">
                     <div class="card-headline">Acoustic Engineering</div>
                     <div class="pipeline-stack">
                         <div class="pipeline-row">
@@ -129,7 +152,7 @@
                 </div>
 
                 <!-- Card: Video Output -->
-                <div class="sidebar-card">
+                <div class="sidebar-card" id="card-video-output">
                     <div class="card-headline">Video Output</div>
                     <div class="control-group">
                         <label>Aspect Ratio</label>
@@ -180,17 +203,17 @@
             <div class="editor-frame">
                 <div class="editor-line-gutter" id="gutter"></div>
                 <textarea id="script-textarea" spellcheck="false" 
-                    placeholder="Begin writing your storytelling script here...&#10;&#10;Key Rules:&#10;- One line of text creates one output speech segment.&#10;- Paragraph breaks are skipped.&#10;- Customize narration presets inline:&#10;  [voice:serena] [emotion:Whispered, fearful] The shadow loomed closer.&#10;  [voice:aiden] [emotion:Quiet Rage] I walked away."></textarea>
+                    placeholder="Begin writing your storytelling script here...&#10;&#10;Key Rules:&#10;- One line of text creates one output speech segment.&#10;- Paragraph breaks are skipped.&#10;- Customize narration presets inline:&#10;  [voice:af_heart] [emotion:Whispered, fearful] The shadow loomed closer.&#10;  [voice:am_adam] [emotion:Quiet Rage] I walked away."></textarea>
             </div>
 
             <!-- Tag Injector Helper Shelf -->
             <div class="tag-shelf">
                 <span class="shelf-label">Insert Tag:</span>
                 <div class="shelf-tags">
-                    <button class="tag-insert" data-tag="[voice:aiden]">Aiden (M)</button>
-                    <button class="tag-insert" data-tag="[voice:serena]">Serena (F)</button>
-                    <button class="tag-insert" data-tag="[voice:ryan]">Ryan (M)</button>
-                    <button class="tag-insert" data-tag="[voice:vivian]">Vivian (F)</button>
+                    <button class="tag-insert" data-tag="[voice:af_sarah]">Sarah (US-F)</button>
+                    <button class="tag-insert" data-tag="[voice:af_bella]">Bella (US-F)</button>
+                    <button class="tag-insert" data-tag="[voice:am_adam]">Adam (US-M)</button>
+                    <button class="tag-insert" data-tag="[voice:bf_emma]">Emma (UK-F)</button>
                     <button class="tag-insert" data-tag="[emotion:Quiet Rage]">Quiet Rage</button>
                     <button class="tag-insert" data-tag="[emotion:Betrayal Discovery]">Betrayal</button>
                     <button class="tag-insert" data-tag="[emotion:Whispered]">Whisper</button>
@@ -199,17 +222,22 @@
             </div>
 
             <!-- ── BOTTOM OUTPUT AREA ── -->
-            <div class="bottom-console">
+            <div class="bottom-console" id="bottom-console">
                 
                 <!-- Action Controls Panel -->
                 <div class="console-actions">
-                    <button class="btn btn-primary btn-generate" id="btn-action-generate">⚡ Run Generation</button>
-                    <button class="btn btn-danger btn-stop hidden" id="btn-action-stop">🛑 Stop Pipeline</button>
-                    <button class="btn btn-secondary btn-clear" id="btn-action-clear">🗑 Clear Output Files</button>
-                    <div class="action-divider"></div>
-                    <div class="download-pane">
-                        <button class="btn btn-download hidden" id="btn-download-wav">WAV</button>
-                        <button class="btn btn-download hidden" id="btn-download-mp3">MP3</button>
+                    <div class="action-left">
+                        <button class="btn btn-primary btn-generate" id="btn-action-generate">⚡ Run Generation</button>
+                        <button class="btn btn-danger btn-stop hidden" id="btn-action-stop">🛑 Stop Pipeline</button>
+                        <button class="btn btn-secondary btn-clear" id="btn-action-clear">🗑 Clear Output Files</button>
+                    </div>
+                    <div class="action-right">
+                        <!-- Current mode indicator (read-only mirror) -->
+                        <span class="current-mode-badge" id="current-mode-badge">✨ Audio + Video</span>
+                        <div class="download-pane">
+                            <button class="btn btn-download hidden" id="btn-download-wav">WAV</button>
+                            <button class="btn btn-download hidden" id="btn-download-mp3">MP3</button>
+                        </div>
                     </div>
                 </div>
 
@@ -224,61 +252,66 @@
                     </div>
                 </div>
 
-                <!-- Collapsible Audio Segments Drawer -->
-                <div class="segments-panel hidden" id="chunk-suite">
-                    <div class="segments-header">
-                        <h3>Segment History</h3>
-                        <span id="chunk-stats-summary"></span>
+                <!-- Scrollable Output Area -->
+                <div class="output-scroll-area" id="output-scroll-area">
+
+                    <!-- Collapsible Audio Segments Drawer -->
+                    <div class="segments-panel hidden" id="chunk-suite">
+                        <div class="segments-header">
+                            <h3>🎙 Audio Segments</h3>
+                            <span id="chunk-stats-summary"></span>
+                        </div>
+                        <div class="segments-list" id="chunk-rows-container"></div>
                     </div>
-                    <div class="segments-list" id="chunk-rows-container"></div>
-                </div>
 
-                <!-- Master Output Audio Player -->
-                <div class="master-player hidden" id="audio-playback-player">
-                    <button class="player-toggle-btn" id="btn-playback-toggle">▶</button>
-                    <div class="player-body">
-                        <div class="player-info">
-                            <span id="playback-title">Full Output</span>
-                            <span id="playback-duration">—</span>
-                        </div>
-                        <div class="player-seeker">
-                            <input type="range" class="timeline-range" id="playback-range-input" min="0" max="100" value="0">
-                            <span id="playback-time">0:00 / 0:00</span>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- ── B-ROLL VIDEO SECTION (auto-starts after audio) ── -->
-                <div class="video-section hidden" id="video-section">
-
-                    <!-- Video pipeline status bar -->
-                    <div class="video-pipeline-header">
-                        <div class="video-pipeline-title">
-                            <span class="video-pipeline-icon">🎬</span>
-                            <span>B-Roll Video Pipeline</span>
-                            <span class="stats-badge" id="video-seg-badge">0 / 0</span>
-                        </div>
-                        <div class="video-pipeline-status">
-                            <div class="progress-track" style="width:200px">
-                                <div class="progress-bar-fill video-bar" id="video-progress-bar"></div>
+                    <!-- Master Output Audio Player -->
+                    <div class="master-player hidden" id="audio-playback-player">
+                        <button class="player-toggle-btn" id="btn-playback-toggle">▶</button>
+                        <div class="player-body">
+                            <div class="player-info">
+                                <span id="playback-title">Full Output</span>
+                                <span id="playback-duration">—</span>
                             </div>
-                            <span class="status-msg" id="video-status-msg">Starting…</span>
+                            <div class="player-seeker">
+                                <input type="range" class="timeline-range" id="playback-range-input" min="0" max="100" value="0">
+                                <span id="playback-time">0:00 / 0:00</span>
+                            </div>
                         </div>
                     </div>
 
-                    <!-- Live segment chips -->
-                    <div class="video-chip-row" id="video-chip-row"></div>
+                    <!-- ── B-ROLL VIDEO SECTION (auto-starts after audio) ── -->
+                    <div class="video-section hidden" id="video-section">
 
-                    <!-- Final video player (shown when done) -->
-                    <div class="video-output-player hidden" id="video-output-player">
-                        <div class="video-output-header">
-                            <span>🎥 Final Video — Ready</span>
-                            <a class="btn btn-download" href="/api/video/download" download="narrator_video.mp4" id="btn-video-download">⬇ Download MP4</a>
+                        <!-- Video pipeline status bar -->
+                        <div class="video-pipeline-header">
+                            <div class="video-pipeline-title">
+                                <span class="video-pipeline-icon">🎬</span>
+                                <span>B-Roll Video Pipeline</span>
+                                <span class="stats-badge" id="video-seg-badge">0 / 0</span>
+                            </div>
+                            <div class="video-pipeline-status">
+                                <div class="progress-track" style="width:200px">
+                                    <div class="progress-bar-fill video-bar" id="video-progress-bar"></div>
+                                </div>
+                                <span class="status-msg" id="video-status-msg">Starting…</span>
+                            </div>
                         </div>
-                        <video id="video-player-node" controls preload="metadata"></video>
-                    </div>
 
-                </div><!-- end video-section -->
+                        <!-- Live segment chips -->
+                        <div class="video-chip-row" id="video-chip-row"></div>
+
+                        <!-- Final video player (shown when done) -->
+                        <div class="video-output-player hidden" id="video-output-player">
+                            <div class="video-output-header">
+                                <span>🎥 Final Video — Ready</span>
+                                <a class="btn btn-download" href="/api/video/download" download="narrator_video.mp4" id="btn-video-download">⬇ Download MP4</a>
+                            </div>
+                            <video id="video-player-node" controls preload="metadata"></video>
+                        </div>
+
+                    </div><!-- end video-section -->
+
+                </div><!-- end output-scroll-area -->
 
             </div>
         </main>

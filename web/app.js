@@ -75,6 +75,28 @@ const DOM = {
 let activePlayingChunk = null;
 let sseSource = null;
 
+// ── PIPELINE MODE STATE ──
+// 'audio' | 'both' | 'video'
+let _pipelineMode = 'both';
+
+const MODE_CONFIG = {
+    audio: {
+        label:      '🎙 Audio Only',
+        hint:       'Generates narration audio only. No video will be created.',
+        badgeColor: '#7c9dff',
+    },
+    both: {
+        label:      '✨ Audio + Video',
+        hint:       'Generates audio then automatically creates B-Roll video.',
+        badgeColor: 'var(--accent)',
+    },
+    video: {
+        label:      '🎬 Video Only',
+        hint:       'Creates B-Roll video using the existing audio. Generate audio first.',
+        badgeColor: '#ff7c7c',
+    },
+};
+
 // Default reference transcripts map
 const REF_TRANSCRIPTS = {
     "ref_voice_male.wav": "The day Paul Reston shook my hand and called me the most talented analyst he'd ever worked with, I believed him.",
@@ -90,6 +112,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     await loadChunks();
     setupGutterSync();
     setupEventListeners();
+    setupModeSelector();
     connectSSE();
 });
 
@@ -147,6 +170,22 @@ function syncEmotionDropdown(text) {
     DOM.selectEmotion.value = '';
 }
 
+const KOKORO_VOICE_LABELS = {
+    "af_sarah": "Sarah (US Female — Soft)",
+    "af_bella": "Bella (US Female — Expressive)",
+    "af_heart": "Heart (US Female — Warm)",
+    "af_nicole": "Nicole (US Female — Clear)",
+    "af_sky": "Sky (US Female — Bright)",
+    "am_adam": "Adam (US Male — Deep)",
+    "am_michael": "Michael (US Male — Natural)",
+    "am_fenrir": "Fenrir (US Male — Rich)",
+    "am_puck": "Puck (US Male — Lively)",
+    "bf_emma": "Emma (UK Female — Elegant)",
+    "bf_isabella": "Isabella (UK Female — Narrative)",
+    "bm_george": "George (UK Male — Classic)",
+    "bm_lewis": "Lewis (UK Male — Conversational)"
+};
+
 async function loadVoices() {
     const voicesData = await apiFetch('/api/voices');
     const config = await apiFetch('/api/config');
@@ -156,7 +195,7 @@ async function loadVoices() {
     voicesData.voices.forEach(voice => {
         const opt = document.createElement('option');
         opt.value = voice;
-        opt.textContent = voice.charAt(0).toUpperCase() + voice.slice(1);
+        opt.textContent = KOKORO_VOICE_LABELS[voice] || (voice.charAt(0).toUpperCase() + voice.slice(1));
         if (config && voice === config.voice) opt.selected = true;
         DOM.selectVoice.appendChild(opt);
     });
@@ -353,10 +392,12 @@ function updateProgressUI(data) {
 
     // Set high-end descriptive messages
     let descriptiveMsg = message;
-    if (status === 'loading') descriptiveMsg = "⚡ Booting Qwen3-TTS Engine & loading model weights...";
+    if (status === 'loading') descriptiveMsg = "⚡ Loading Kokoro ONNX Engine & model weights...";
     else if (status === 'stitching') descriptiveMsg = "🎛️ Merging acoustic segment outputs...";
     else if (status === 'done') {
-        descriptiveMsg = "✅ Narration compilation completed — starting B-Roll video…";
+        descriptiveMsg = _pipelineMode === 'audio'
+            ? "✅ Audio generation complete."
+            : "✅ Narration complete — starting B-Roll video…";
         // Auto-kick the video pipeline right after audio finishes
         setTimeout(autoStartVideoAfterAudio, 800);
     }
@@ -594,7 +635,21 @@ async function triggerAudioGeneration() {
     triggerSaveConfig();
     const data = await apiPost('/api/generate', { mode: 'batch' });
     if (data && !data.ok) {
-        showToast(data.error || 'Failed to initialize pipeline', 'err');
+        showToast(data.error || 'Failed to initialize audio pipeline', 'err');
+    }
+}
+
+async function triggerVideoGeneration() {
+    await startVideoGeneration();
+}
+
+async function triggerGeneration() {
+    if (_pipelineMode === 'audio') {
+        await triggerAudioGeneration();
+    } else if (_pipelineMode === 'video') {
+        await triggerVideoGeneration();
+    } else {
+        await triggerAudioGeneration();
     }
 }
 
@@ -716,7 +771,7 @@ function setupEventListeners() {
     });
 
     // Main action routers
-    DOM.btnActionGenerate.addEventListener('click', triggerAudioGeneration);
+    DOM.btnActionGenerate.addEventListener('click', triggerGeneration);
     DOM.btnActionStop.addEventListener('click', abortGeneration);
     DOM.btnActionClear.addEventListener('click', purgeProjectOutputs);
 
@@ -814,9 +869,10 @@ async function refreshVideoState() {
 }
 
 // ── Called externally when audio generation finishes ─────────
-// Hooked into the existing audio-done SSE handler below.
+// Only auto-starts video when mode is 'both'.
 
 function autoStartVideoAfterAudio() {
+    if (_pipelineMode !== 'both') return;
     if (_videoRunning) return;
     startVideoGeneration();
 }
@@ -925,4 +981,92 @@ function revealVideoPlayer() {
     video.load();
     // Scroll to it
     player.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+// ============================================================
+// PIPELINE MODE SELECTOR
+// Controls which pipeline stages run when Generate is clicked.
+// ============================================================
+
+function setupModeSelector() {
+    const buttons = document.querySelectorAll('.mode-btn');
+    if (!buttons.length) return;
+
+    // Restore from sessionStorage if available
+    const saved = sessionStorage.getItem('narratorMode');
+    if (saved && MODE_CONFIG[saved]) applyMode(saved, false);
+    else applyMode('both', false);
+
+    buttons.forEach(btn => {
+        btn.addEventListener('click', () => {
+            const mode = btn.dataset.mode;
+            applyMode(mode, true);
+        });
+    });
+}
+
+function applyMode(mode, save = true) {
+    if (!MODE_CONFIG[mode]) return;
+    _pipelineMode = mode;
+    if (save) sessionStorage.setItem('narratorMode', mode);
+
+    const cfg = MODE_CONFIG[mode];
+
+    // Update pill buttons
+    document.querySelectorAll('.mode-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.mode === mode);
+    });
+
+    // Update hint text
+    const hint = document.getElementById('mode-hint');
+    if (hint) hint.textContent = cfg.hint;
+
+    // Update the bottom-console mode badge
+    const badge = document.getElementById('current-mode-badge');
+    if (badge) {
+        badge.textContent = cfg.label;
+        badge.style.borderColor   = cfg.badgeColor;
+        badge.style.color         = cfg.badgeColor;
+        badge.style.background    = cfg.badgeColor.startsWith('#')
+            ? cfg.badgeColor + '1a'
+            : 'rgba(0,255,136,0.1)';
+    }
+
+    // Show / hide sidebar cards based on mode
+    const cardVoice   = document.getElementById('card-voice-settings');
+    const cardCloning = document.getElementById('card-voice-cloning');
+    const cardEmotion = document.getElementById('card-emotion');
+    const cardAudio   = document.getElementById('card-audio-pipeline');
+    const cardVideo   = document.getElementById('card-video-output');
+
+    if (mode === 'video') {
+        // Video only — audio cards not needed
+        if (cardVoice)   cardVoice.style.display   = 'none';
+        if (cardCloning) cardCloning.style.display = 'none';
+        if (cardEmotion) cardEmotion.style.display = 'none';
+        if (cardAudio)   cardAudio.style.display   = 'none';
+        if (cardVideo)   cardVideo.style.display   = '';
+    } else if (mode === 'audio') {
+        // Audio only — video output card hidden
+        if (cardVoice)   cardVoice.style.display   = '';
+        if (cardCloning) cardCloning.style.display = '';
+        if (cardEmotion) cardEmotion.style.display = '';
+        if (cardAudio)   cardAudio.style.display   = '';
+        if (cardVideo)   cardVideo.style.display   = 'none';
+    } else {
+        // Both — show everything
+        if (cardVoice)   cardVoice.style.display   = '';
+        if (cardCloning) cardCloning.style.display = '';
+        if (cardEmotion) cardEmotion.style.display = '';
+        if (cardAudio)   cardAudio.style.display   = '';
+        if (cardVideo)   cardVideo.style.display   = '';
+    }
+
+    // Update generate button label
+    const btnGen = document.getElementById('btn-action-generate');
+    if (btnGen) {
+        if (mode === 'audio')       btnGen.textContent = '⚡ Generate Audio';
+        else if (mode === 'video')  btnGen.textContent = '🎬 Generate Video';
+        else                        btnGen.textContent = '⚡ Run Generation';
+    }
 }

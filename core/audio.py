@@ -9,7 +9,7 @@ import struct
 import subprocess
 import wave
 
-from mlx_audio.tts.generate import generate_audio
+import soundfile as sf
 
 
 # ── Single chunk generation ──────────────────────────────────
@@ -20,51 +20,40 @@ def generate_chunk(
     text: str,
     output_path: str,
     *,
-    voice: str = "aiden",
+    voice: str = "af_sarah",
     ref_audio: str | None = None,
     ref_text: str | None = None,
     instruct: str | None = None,
     speed: float = 1.0,
     verbose: bool = True,
 ) -> bool:
-    """Generate a single WAV chunk and save it to *output_path*.
+    """Generate a single WAV chunk via Kokoro-ONNX and save it to *output_path*.
 
-    Uses a temporary directory internally and cleans up on success or failure.
     Returns True if the WAV was created successfully.
     """
-    tmp_dir = output_path + ".tmp"
-    os.makedirs(tmp_dir, exist_ok=True)
-
     try:
-        generate_audio(
-            model=model,
+        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+        
+        # Ensure we have a valid voice name
+        voice_key = voice if voice else "af_sarah"
+        
+        if verbose:
+            print(f"  🎙 Synthesis via Kokoro with voice: {voice_key}")
+            
+        samples, sample_rate = model.create(
             text=text,
-            voice=voice,
-            ref_audio=ref_audio,
-            ref_text=ref_text,
-            instruct=instruct,
+            voice=voice_key,
             speed=speed,
-            output_path=tmp_dir,
-            save=True,
-            verbose=verbose,
+            lang="en-us"
         )
 
-        wavs = sorted(f for f in os.listdir(tmp_dir) if f.endswith(".wav"))
-        if wavs:
-            os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-            shutil.move(os.path.join(tmp_dir, wavs[0]), output_path)
-            return True
-
-        print(f"  ✗ No WAV produced for: {text[:50]}...")
-        return False
+        sf.write(output_path, samples, sample_rate)
+        return True
 
     except Exception as e:
-        print(f"  ✗ Generation error: {e}")
+        print(f"  ✗ Kokoro generation error: {e}")
         return False
 
-    finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-        gc.collect()
 
 
 # ── Silence generation ───────────────────────────────────────
