@@ -143,23 +143,22 @@ http://127.0.0.1:8000
 
 #### Dashboard Features
 
-| Area | What it does |
+| Area | Description |
 |------|-------------|
-| **Script Editor** | Write/edit your narration with line numbers. Each line = one chunk. |
-| **Voice & Style** | Pick voice, adjust speed, write emotion instructions |
-| **Audio Pipeline** | Set silence padding, toggle normalization and MP3 export |
-| **Reference Voice** | See current ref, upload new voices via drag-and-drop |
-| **Generate** | Click to start batch generation with real-time progress bar |
-| **Chunk List** | See all generated chunks, click to play individual ones |
-| **Audio Player** | Play the final stitched output, seek, download WAV/MP3 |
+| **Script Workspace** | Left-side console with line-numbered script editor and visual statistics (word count, chunk count, estimated runtime). |
+| **Active Controls** | Left-sidebar containing preset selectors, playback speed slider, and acoustic engineering switches. |
+| **Voice Cloning Console** | Drag-and-drop reference WAV/MP3 uploads, active profile selection, and spoken transcript sync. |
+| **Quick Tag Helpers** | Inject inline override tags (like `[voice:serena]` or `[emotion:Quiet Rage]`) directly at the cursor's location. |
+| **Segment History** | Collapsible segments list showing status, duration, speed, play button, and individual deletion (✕). |
+| **Output Console** | Integrated timeline playback bar containing seeking options, elapsed indicators, and WAV/MP3 downloads. |
 
 #### Real-time Progress
 
-Generation progress is streamed live via Server-Sent Events (SSE):
-- Progress bar updates as each chunk completes
-- Chunk pills appear with duration and timing info
-- Status indicator shows model state (loading/generating/done)
-- You can cancel mid-generation with the Stop button
+The generation console streams updates live via Server-Sent Events (SSE):
+- High-tech neon progress bar fill matches segment generation.
+- Detailed progress status updates (e.g. *Applying EBU R128 Loudness Normalization...*, *Booting Qwen3-TTS Engine...*).
+- Status overlay changes color depending on connection and pipeline state.
+- Abort generation mid-run using the primary Stop button.
 
 #### Keyboard Shortcuts
 
@@ -257,8 +256,8 @@ All settings live in **`config.py`**. The web dashboard also lets you change the
 | `SPEED` | `1.0` | Playback speed multiplier |
 | `EMOTION` | *(see below)* | Emotional/style instruction for the model |
 | `SILENCE_PADDING` | `0.8` | Seconds of silence between chunks |
-| `NORMALIZE_AUDIO` | `True` | EBU R128 loudness normalization |
-| `EXPORT_MP3` | `True` | Also export MP3 alongside WAV |
+| `NORMALIZE_AUDIO` | `False` | EBU R128 loudness normalization |
+| `EXPORT_MP3` | `False` | Also export MP3 alongside WAV |
 | `SCRIPT_FILE` | `script.txt` | Input script file for batch mode |
 | `OUTPUT_FILE` | `outputs/final_episode.wav` | Final stitched output path |
 | `CHUNKS_DIR` | `outputs/chunks` | Directory for individual chunks |
@@ -285,7 +284,7 @@ EMOTION = "Tense and urgent. Start with a whisper, build intensity. Short pauses
 
 ### Per-Chunk Overrides
 
-Change voice or emotion for specific lines using inline tags:
+Change voice or emotion for specific lines using inline tags. The script parser supports both explicit key-value overrides and clean inline shorthand brackets:
 
 ```
 Normal narration line with default voice and emotion.
@@ -294,8 +293,16 @@ Normal narration line with default voice and emotion.
 
 [emotion:Whispered, fearful] This line uses a different emotion.
 
-[voice:ryan] [emotion:Angry and intense] This combines both overrides.
+[voice:ryan] [emotion:Angry] This combines both explicit overrides.
+
+# Shorthand Brackets (High-End UX)
+The day Paul Reston shook my hand, [slight pause] I believed him. [Bitter laugh] That was my first mistake.
 ```
+
+When you write shorthand brackets:
+- **Never spoken**: Shorthand tags (like `[slight pause]` or `[Bitter laugh]`) are automatically stripped from the text sent to the generator so they are never read aloud.
+- **Combined instructions**: If multiple tags exist in a single line, they are joined together (e.g., `"slight pause, Bitter laugh"`) and passed to the model as a custom emotion instruction for that segment.
+
 
 ### Available Voices
 
