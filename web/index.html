@@ -68,7 +68,7 @@
 
                 <!-- Card: Emotion Presets -->
                 <div class="sidebar-card">
-                    <div class="card-headline">Emotional Arc & Directions</div>
+                    <div class="card-headline">Emotional Arc &amp; Directions</div>
                     <div class="control-group">
                         <label for="select-emotion-preset">Narrator Presets</label>
                         <select id="select-emotion-preset">
@@ -76,18 +76,18 @@
                             <optgroup label="Narration Styles">
                                 <option value="Deep, serious, and emotionally controlled. Speak slowly with gravitas and natural pauses. Begin calm and reflective, gradually build tension, express genuine hurt without melodrama, become intense during betrayal scenes, then finish with quiet confidence and emotional resolution.">🎭 Cinematic Narrator (Default)</option>
                                 <option value="Warm, intimate, and conversational. Speak as if confiding in a close friend late at night. Natural pace with soft emphasis on emotional words. Gentle but honest.">💬 Intimate Confessional</option>
-                                <option value="Cold, detached, and matter-of-fact. Deliver with clinical precision, no emotional coloring. The flatness itself conveys the weight of what happened.">🧊 Cold & Detached</option>
+                                <option value="Cold, detached, and matter-of-fact. Deliver with clinical precision, no emotional coloring. The flatness itself conveys the weight of what happened.">🧊 Cold &amp; Detached</option>
                             </optgroup>
-                            <optgroup label="Betrayal & Deep Emotion">
+                            <optgroup label="Betrayal &amp; Deep Emotion">
                                 <option value="Start calm and trusting, then let disbelief creep in. Build to a moment of stunned silence. Let the hurt land quietly, not loudly. End with a hollow, empty resolve.">💔 Betrayal Discovery</option>
                                 <option value="Controlled anger simmering beneath every word. Speak with precision and restraint. Each sentence is measured, deliberate. The quietness is more terrifying than shouting.">🔥 Quiet Rage</option>
                                 <option value="Vulnerable, raw, and exposed. Voice slightly unsteady. Pauses where words fail. Genuine emotional weight without melodrama. Let silence carry meaning.">😢 Raw Vulnerability</option>
                                 <option value="Bitter and sardonic. Speak with a knowing smile. Every compliment is laced with irony. The humor is a shield against deeper pain.">😏 Bitter Sarcasm</option>
                                 <option value="Resigned and exhausted. Speak as if you've already accepted the worst. No energy left for anger. Just a tired, hollow truth.">😶 Numb Resignation</option>
                             </optgroup>
-                            <optgroup label="Pacing & Tension">
+                            <optgroup label="Pacing &amp; Tension">
                                 <option value="Slow, deliberate, and suspenseful. Long pauses between key phrases. Build tension with pacing alone. Let the listener lean in.">⏳ Slow Burn Suspense</option>
-                                <option value="Urgent and intense. Words come faster as the stakes rise. Breathless at climactic moments. Sharp, punchy delivery.">⚡ Urgent & Intense</option>
+                                <option value="Urgent and intense. Words come faster as the stakes rise. Breathless at climactic moments. Sharp, punchy delivery.">⚡ Urgent &amp; Intense</option>
                                 <option value="Whispered and secretive. Speak as if someone might overhear. Intimate, conspiratorial. Pull the listener into a private confession.">🤫 Whispered Secret</option>
                                 <option value="Nostalgic and wistful. Speak as if recalling a distant memory. Bittersweet warmth mixed with longing. Gentle, slightly faded.">🌅 Nostalgic Flashback</option>
                                 <option value="Authoritative and confident. Speak with the certainty of someone who has survived. Strong, grounded, and empowered. The voice of hard-won wisdom.">👑 Empowered Resolution</option>
@@ -128,7 +128,37 @@
                     </div>
                 </div>
 
-            </div>
+                <!-- Card: Video Output -->
+                <div class="sidebar-card">
+                    <div class="card-headline">Video Output</div>
+                    <div class="control-group">
+                        <label>Aspect Ratio</label>
+                        <div class="aspect-ratio-grid" id="aspect-ratio-grid">
+                            <button class="ar-btn active" data-res="1920x1080" data-label="16:9" id="ar-169">
+                                <span class="ar-preview ar-169"></span>
+                                <span class="ar-label">16:9</span>
+                                <span class="ar-sub">1920×1080</span>
+                            </button>
+                            <button class="ar-btn" data-res="1080x1920" data-label="9:16" id="ar-916">
+                                <span class="ar-preview ar-916"></span>
+                                <span class="ar-label">9:16</span>
+                                <span class="ar-sub">1080×1920</span>
+                            </button>
+                            <button class="ar-btn" data-res="1080x1080" data-label="1:1" id="ar-11">
+                                <span class="ar-preview ar-11"></span>
+                                <span class="ar-label">1:1</span>
+                                <span class="ar-sub">1080×1080</span>
+                            </button>
+                            <button class="ar-btn" data-res="1080x1350" data-label="4:5" id="ar-45">
+                                <span class="ar-preview ar-45"></span>
+                                <span class="ar-label">4:5</span>
+                                <span class="ar-sub">1080×1350</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+            </div><!-- end sidebar-scrollable-content -->
         </aside>
 
         <!-- ── MAIN CONTENT WORKSPACE ── -->
@@ -164,11 +194,11 @@
                     <button class="tag-insert" data-tag="[emotion:Quiet Rage]">Quiet Rage</button>
                     <button class="tag-insert" data-tag="[emotion:Betrayal Discovery]">Betrayal</button>
                     <button class="tag-insert" data-tag="[emotion:Whispered]">Whisper</button>
-                    <button class="tag-insert" data-tag="[emotion:Cold & Detached]">Detached</button>
+                    <button class="tag-insert" data-tag="[emotion:Cold &amp; Detached]">Detached</button>
                 </div>
             </div>
 
-            <!-- ── BOTTOM CONTROL CONSOLE & DRAWER ── -->
+            <!-- ── BOTTOM OUTPUT AREA ── -->
             <div class="bottom-console">
                 
                 <!-- Action Controls Panel -->
@@ -217,6 +247,38 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- ── B-ROLL VIDEO SECTION (auto-starts after audio) ── -->
+                <div class="video-section hidden" id="video-section">
+
+                    <!-- Video pipeline status bar -->
+                    <div class="video-pipeline-header">
+                        <div class="video-pipeline-title">
+                            <span class="video-pipeline-icon">🎬</span>
+                            <span>B-Roll Video Pipeline</span>
+                            <span class="stats-badge" id="video-seg-badge">0 / 0</span>
+                        </div>
+                        <div class="video-pipeline-status">
+                            <div class="progress-track" style="width:200px">
+                                <div class="progress-bar-fill video-bar" id="video-progress-bar"></div>
+                            </div>
+                            <span class="status-msg" id="video-status-msg">Starting…</span>
+                        </div>
+                    </div>
+
+                    <!-- Live segment chips -->
+                    <div class="video-chip-row" id="video-chip-row"></div>
+
+                    <!-- Final video player (shown when done) -->
+                    <div class="video-output-player hidden" id="video-output-player">
+                        <div class="video-output-header">
+                            <span>🎥 Final Video — Ready</span>
+                            <a class="btn btn-download" href="/api/video/download" download="narrator_video.mp4" id="btn-video-download">⬇ Download MP4</a>
+                        </div>
+                        <video id="video-player-node" controls preload="metadata"></video>
+                    </div>
+
+                </div><!-- end video-section -->
 
             </div>
         </main>

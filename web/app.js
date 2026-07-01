@@ -355,7 +355,11 @@ function updateProgressUI(data) {
     let descriptiveMsg = message;
     if (status === 'loading') descriptiveMsg = "⚡ Booting Qwen3-TTS Engine & loading model weights...";
     else if (status === 'stitching') descriptiveMsg = "🎛️ Merging acoustic segment outputs...";
-    else if (status === 'done') descriptiveMsg = "✅ Narration compilation completed successfully!";
+    else if (status === 'done') {
+        descriptiveMsg = "✅ Narration compilation completed — starting B-Roll video…";
+        // Auto-kick the video pipeline right after audio finishes
+        setTimeout(autoStartVideoAfterAudio, 800);
+    }
     else if (status === 'error') descriptiveMsg = "⚠️ Generation pipeline halted due to an error.";
     else if (status === 'cancelled') descriptiveMsg = "🛑 Generation pipeline aborted by request.";
     
@@ -600,11 +604,12 @@ async function abortGeneration() {
 }
 
 async function purgeProjectOutputs() {
-    if (!confirm('Are you sure you want to delete ALL generated clips and final narratives? This cannot be undone.')) {
+    if (!confirm('Are you sure you want to delete ALL generated audio clips and video? This cannot be undone.')) {
         return;
     }
     const data = await apiPost('/api/clear', {});
     if (data && data.ok) {
+        // ── Reset audio UI ──────────────────────────────────
         DOM.chunkSuite.classList.add('hidden');
         DOM.chunkRowsContainer.innerHTML = '';
         DOM.audioPlaybackPlayer.classList.add('hidden');
@@ -613,7 +618,29 @@ async function purgeProjectOutputs() {
         DOM.progressBarFill.style.width = '0%';
         DOM.statusStats.textContent = '';
         DOM.statusMsg.textContent = 'System Standby';
-        showToast('Project cleared successfully', 'ok');
+
+        // ── Reset video UI ──────────────────────────────────
+        const videoSection = document.getElementById('video-section');
+        if (videoSection) videoSection.classList.add('hidden');
+
+        const chipRow = document.getElementById('video-chip-row');
+        if (chipRow) chipRow.innerHTML = '';
+
+        const videoPlayer = document.getElementById('video-output-player');
+        if (videoPlayer) videoPlayer.classList.add('hidden');
+
+        const videoBar = document.getElementById('video-progress-bar');
+        if (videoBar) videoBar.style.width = '0%';
+
+        const videoMsg = document.getElementById('video-status-msg');
+        if (videoMsg) videoMsg.textContent = '';
+
+        const videoBadge = document.getElementById('video-seg-badge');
+        if (videoBadge) videoBadge.textContent = '0 / 0';
+
+        _videoRunning = false;
+
+        showToast('All outputs cleared', 'ok');
     }
 }
 
@@ -706,4 +733,196 @@ function setupEventListeners() {
     
     // File upload zones setup
     setupReferenceVoiceActions();
+
+    // ── ASPECT RATIO SELECTOR ────────────────────────────────
+    setupAspectRatio();
+
+    // ── VIDEO AUTO-PIPELINE SETUP ────────────────────────────
+    setupVideoPipeline();
+}
+
+// ============================================================
+// ASPECT RATIO SELECTOR
+// ============================================================
+
+function setupAspectRatio() {
+    const grid = document.getElementById('aspect-ratio-grid');
+    if (!grid) return;
+
+    // Load current resolution from server and highlight active button
+    fetch('/api/video/config')
+        .then(r => r.json())
+        .then(cfg => {
+            if (cfg.resolution) setActiveAR(cfg.resolution);
+        })
+        .catch(() => {});
+
+    // Click handler — update active state and save to server
+    grid.querySelectorAll('.ar-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const res = btn.dataset.res;
+            setActiveAR(res);
+            // Persist to server
+            fetch('/api/video/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ resolution: res }),
+            }).catch(() => {});
+        });
+    });
+}
+
+function setActiveAR(resolution) {
+    document.querySelectorAll('.ar-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.res === resolution);
+    });
+}
+
+
+// ============================================================
+// B-ROLL VIDEO — Fully Automated Pipeline
+// Auto-starts when audio generation finishes.
+// Shows inline progress chips + final video player below audio.
+// ============================================================
+
+let _videoSSE       = null;
+let _videoRunning   = false;
+
+function setupVideoPipeline() {
+    connectVideoSSE();
+    // Restore state if server already has a done/running video
+    refreshVideoState();
+}
+
+// ── SSE connection ────────────────────────────────────────────
+
+function connectVideoSSE() {
+    if (_videoSSE) _videoSSE.close();
+    _videoSSE = new EventSource('/api/video/events');
+    _videoSSE.addEventListener('progress', e => {
+        handleVideoProgress(JSON.parse(e.data));
+    });
+    _videoSSE.onerror = () => setTimeout(connectVideoSSE, 3000);
+}
+
+async function refreshVideoState() {
+    try {
+        const st = await fetch('/api/video/status').then(r => r.json());
+        handleVideoProgress(st);
+        if (st.status === 'done' && st.output_file) revealVideoPlayer();
+    } catch(_) {}
+}
+
+// ── Called externally when audio generation finishes ─────────
+// Hooked into the existing audio-done SSE handler below.
+
+function autoStartVideoAfterAudio() {
+    if (_videoRunning) return;
+    startVideoGeneration();
+}
+
+// ── Start video generation ────────────────────────────────────
+
+async function startVideoGeneration() {
+    if (_videoRunning) return;
+
+    // Reset UI
+    const section = document.getElementById('video-section');
+    section.classList.remove('hidden');
+    document.getElementById('video-chip-row').innerHTML = '';
+    document.getElementById('video-output-player').classList.add('hidden');
+    document.getElementById('video-progress-bar').style.width = '0%';
+    document.getElementById('video-status-msg').textContent = 'Starting…';
+    document.getElementById('video-seg-badge').textContent = '0 / 0';
+
+    try {
+        const res  = await fetch('/api/video/create', { method: 'POST' });
+        const data = await res.json();
+        if (!data.ok) {
+            document.getElementById('video-status-msg').textContent =
+                '❌ ' + (data.error || 'Could not start video');
+        }
+    } catch(e) {
+        document.getElementById('video-status-msg').textContent = '❌ Request failed';
+    }
+}
+
+// ── Progress handler ──────────────────────────────────────────
+
+function handleVideoProgress(data) {
+    const { running, status, message, current_chunk, total_chunks, segments_done } = data;
+    _videoRunning = !!running;
+
+    // Show the section whenever there's activity
+    if (status && status !== 'idle') {
+        document.getElementById('video-section').classList.remove('hidden');
+    }
+
+    // Progress bar (purple)
+    const pct = total_chunks > 0 ? Math.round((current_chunk / total_chunks) * 100) : 0;
+    document.getElementById('video-progress-bar').style.width = pct + '%';
+
+    // Badge
+    if (total_chunks > 0) {
+        document.getElementById('video-seg-badge').textContent =
+            `${current_chunk} / ${total_chunks}`;
+    }
+
+    // Status label
+    const icons = { idle:'⚙', searching:'🔍', merging:'🎞', done:'✅', error:'❌', cancelled:'⛔' };
+    document.getElementById('video-status-msg').textContent =
+        (icons[status] || '⚙') + ' ' + (message || '');
+
+    // Render chips
+    if (segments_done && segments_done.length) {
+        segments_done.forEach(seg => renderChip(seg));
+    }
+
+    // Done — show video player
+    if (status === 'done') {
+        document.getElementById('video-progress-bar').style.width = '100%';
+        revealVideoPlayer();
+    }
+}
+
+// ── Segment chip ──────────────────────────────────────────────
+
+function renderChip(seg) {
+    const row = document.getElementById('video-chip-row');
+    const id  = `vchip-${seg.index}`;
+    let chip  = document.getElementById(id);
+
+    if (!chip) {
+        chip    = document.createElement('span');
+        chip.id = id;
+        row.appendChild(chip);
+    }
+
+    const typeEmoji = seg.type === 'video'  ? '🎬' :
+                      seg.type === 'image'  ? '🖼'  :
+                      seg.type === 'color'  ? '⬛'  :
+                      seg.type === 'cached' ? '♻'   : '⏳';
+
+    const cls = seg.ok === true  ? (seg.type === 'image' ? 'chip-image' : 'chip-done') :
+                seg.ok === false ? 'chip-error' : 'chip-working';
+
+    chip.className = `vchip ${cls}`;
+    chip.innerHTML = `<span class="vchip-dot"></span>${typeEmoji} #${seg.index + 1} ${escapeHtml(seg.keyword || '')}`;
+    chip.title     = `Source: ${seg.source || '?'} | ${seg.time || ''}`;
+}
+
+function escapeHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ── Reveal video player ───────────────────────────────────────
+
+function revealVideoPlayer() {
+    const player = document.getElementById('video-output-player');
+    const video  = document.getElementById('video-player-node');
+    player.classList.remove('hidden');
+    video.src = '/api/video/download?t=' + Date.now();
+    video.load();
+    // Scroll to it
+    player.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }

@@ -52,3 +52,19 @@ VOICES = [
     "sohee",
     "uncle_fu",
 ]
+
+# ── B-Roll Video Pipeline ────────────────────────────────────
+PEXELS_API_KEY      = "pOccPxW2ezZ5IwOsBYo7VDRiRj2zXUjk9TCOXHeGIZyxFekaMSUuxL5s"
+PIXABAY_API_KEY     = "56526229-bf7604a89c5531497f60e7f3c"
+COVERR_API_KEY      = ""   # optional – get free at coverr.co/api
+GEMINI_API_KEY      = "AQ.Ab8RN6L_hnsAPvlwPUd8Q6YUoYYMNnIVyaC6fJ4i5mmEgy3rLg"
+
+# Video output settings
+VIDEO_RESOLUTION    = "1920x1080"
+VIDEO_FPS           = 30
+VIDEO_DIR           = "outputs/video"
+VIDEO_SEGMENTS_DIR  = "outputs/video/segments"
+VIDEO_OUTPUT_FILE   = "outputs/video/final_video.mp4"
+
+# Keyword extraction mode: "rake" (offline) or "gemini" (free AI Studio key)
+KEYWORD_MODE        = "gemini"  # using Gemini 2.5 Flash (free tier)
