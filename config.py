@@ -42,17 +42,39 @@ SERVER_PORT = 8000
 
 # ── All available voices ─────────────────────────────────────
 VOICES = [
+    # American Female
     "af_sarah",
     "af_bella",
     "af_heart",
     "af_nicole",
     "af_sky",
+    "af_alloy",
+    "af_aoede",
+    "af_jessica",
+    "af_kore",
+    "af_nova",
+    "af_river",
+
+    # American Male
     "am_adam",
     "am_michael",
     "am_fenrir",
     "am_puck",
+    "am_echo",
+    "am_eric",
+    "am_liam",
+    "am_onyx",
+    "am_santa",
+
+    # British Female
+    "bf_alice",
     "bf_emma",
     "bf_isabella",
+    "bf_lily",
+
+    # British Male
+    "bm_daniel",
+    "bm_fable",
     "bm_george",
     "bm_lewis",
 ]

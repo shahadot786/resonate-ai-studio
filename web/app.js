@@ -171,17 +171,39 @@ function syncEmotionDropdown(text) {
 }
 
 const KOKORO_VOICE_LABELS = {
+    // American Female
     "af_sarah": "Sarah (US Female — Soft)",
     "af_bella": "Bella (US Female — Expressive)",
     "af_heart": "Heart (US Female — Warm)",
     "af_nicole": "Nicole (US Female — Clear)",
     "af_sky": "Sky (US Female — Bright)",
+    "af_alloy": "Alloy (US Female — Balanced)",
+    "af_aoede": "Aoede (US Female — Narrator)",
+    "af_jessica": "Jessica (US Female — Crisp)",
+    "af_kore": "Kore (US Female — Sweet)",
+    "af_nova": "Nova (US Female — Energetic)",
+    "af_river": "River (US Female — Calm)",
+    
+    // American Male
     "am_adam": "Adam (US Male — Deep)",
     "am_michael": "Michael (US Male — Natural)",
     "am_fenrir": "Fenrir (US Male — Rich)",
     "am_puck": "Puck (US Male — Lively)",
+    "am_echo": "Echo (US Male — Corporate)",
+    "am_eric": "Eric (US Male — Conversational)",
+    "am_liam": "Liam (US Male — Friendly)",
+    "am_onyx": "Onyx (US Male — Authority)",
+    "am_santa": "Santa (US Male — Festive)",
+    
+    // British Female
+    "bf_alice": "Alice (UK Female — Gentle)",
     "bf_emma": "Emma (UK Female — Elegant)",
     "bf_isabella": "Isabella (UK Female — Narrative)",
+    "bf_lily": "Lily (UK Female — Bright)",
+    
+    // British Male
+    "bm_daniel": "Daniel (UK Male — Warm)",
+    "bm_fable": "Fable (UK Male — Dramatic)",
     "bm_george": "George (UK Male — Classic)",
     "bm_lewis": "Lewis (UK Male — Conversational)"
 };
