@@ -30,6 +30,7 @@ const DOM = {
     txtRefTranscript: $('#txt-ref-transcript'),
     dropZone:         $('#drop-zone'),
     inputFileUpload:  $('#input-file-upload'),
+    btnBrowseTrigger: $('#btn-browse-trigger'),
 
     // Emotion Custom Presets
     selectEmotion:    $('#select-emotion-preset'),

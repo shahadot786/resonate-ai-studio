@@ -219,6 +219,11 @@ select:focus, input[type="number"]:focus, textarea:focus {
   box-shadow: 0 0 0 2px var(--primary-glow);
 }
 
+textarea {
+  resize: vertical;
+  min-height: 110px;
+}
+
 select {
   cursor: pointer;
   appearance: none;

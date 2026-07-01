@@ -26,8 +26,8 @@ EMOTION = (
 
 # ── Audio pipeline ───────────────────────────────────────────
 SILENCE_PADDING = 0.8       # seconds of silence between chunks
-NORMALIZE_AUDIO = True      # EBU R128 loudness normalization
-EXPORT_MP3 = True           # also export MP3 alongside WAV
+NORMALIZE_AUDIO = False     # EBU R128 loudness normalization
+EXPORT_MP3 = False          # also export MP3 alongside WAV
 SAMPLE_RATE = 24000         # sample rate for generated silence
 
 # ── Paths ────────────────────────────────────────────────────
