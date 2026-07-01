@@ -8,11 +8,15 @@ import time
 from config import (
     CHUNKS_DIR,
     EMOTION,
+    EXPORT_MP3,
     MODEL_PATH,
+    NORMALIZE_AUDIO,
     OUTPUT_FILE,
     REF_AUDIO,
     REF_TEXT,
+    SAMPLE_RATE,
     SCRIPT_FILE,
+    SILENCE_PADDING,
     SPEED,
     VOICE,
 )
@@ -31,16 +35,19 @@ def main():
     os.makedirs(CHUNKS_DIR, exist_ok=True)
     os.makedirs("outputs", exist_ok=True)
 
-    # Parse script — each non-empty line is one chunk
+    # Parse script — each non-empty line is one chunk (with optional overrides)
     chunks = parse_script(SCRIPT_FILE)
     total = len(chunks)
 
     print("=" * 50)
     print("  Narrator — Batch Generator")
     print("=" * 50)
-    print(f"  Script:  {SCRIPT_FILE}")
-    print(f"  Voice:   {VOICE}")
-    print(f"  Chunks:  {total}")
+    print(f"  Script:     {SCRIPT_FILE}")
+    print(f"  Voice:      {VOICE}")
+    print(f"  Chunks:     {total}")
+    print(f"  Silence:    {SILENCE_PADDING}s between chunks")
+    print(f"  Normalize:  {'yes' if NORMALIZE_AUDIO else 'no'}")
+    print(f"  MP3 export: {'yes' if EXPORT_MP3 else 'no'}")
     print("=" * 50)
 
     model = load_tts_model(MODEL_PATH)
@@ -57,17 +64,23 @@ def main():
             made.append(chunk_path)
             continue
 
-        preview = chunk[:60].replace("\n", " ")
-        print(f"  [{i + 1}/{total}] \"{preview}...\"")
+        preview = chunk["text"][:60].replace("\n", " ")
+        voice = chunk["voice"] or VOICE
+        emotion = chunk["emotion"] or EMOTION
+
+        if chunk["voice"]:
+            print(f"  [{i + 1}/{total}] [voice:{voice}] \"{preview}...\"")
+        else:
+            print(f"  [{i + 1}/{total}] \"{preview}...\"")
 
         ok = generate_chunk(
             model,
-            chunk,
+            chunk["text"],
             chunk_path,
-            voice=VOICE,
+            voice=voice,
             ref_audio=REF_AUDIO,
             ref_text=REF_TEXT,
-            instruct=EMOTION,
+            instruct=emotion,
             speed=SPEED,
         )
 
@@ -77,13 +90,22 @@ def main():
 
     # Stitch
     print("\nStitching chunks...")
-    if made and stitch_wavs(made, OUTPUT_FILE):
+    if made and stitch_wavs(
+        made,
+        OUTPUT_FILE,
+        silence_padding=SILENCE_PADDING,
+        sample_rate=SAMPLE_RATE,
+        normalize=NORMALIZE_AUDIO,
+        export_mp3=EXPORT_MP3,
+    ):
         elapsed = time.time() - start
         duration = get_duration(OUTPUT_FILE)
         print("\n" + "=" * 50)
         print("  ✓ COMPLETE")
         print("=" * 50)
         print(f"  Output:   {OUTPUT_FILE}")
+        if EXPORT_MP3:
+            print(f"  MP3:      {OUTPUT_FILE.replace('.wav', '.mp3')}")
         print(f"  Duration: {duration}")
         print(f"  Time:     {int(elapsed // 60)}m {int(elapsed % 60)}s")
         print(f"\n  Play: afplay {OUTPUT_FILE}")
