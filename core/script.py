@@ -10,7 +10,7 @@ _TAG_RE = re.compile(r"\[(voice|emotion):([^\]]+)\]", re.IGNORECASE)
 
 
 def parse_chunk_overrides(line: str) -> dict:
-    """Extract [voice:X] and [emotion:X] tags from a line.
+    """Extract [voice:X], [emotion:X], or shorthand [X] tags from a line.
 
     Returns a dict with keys:
         text     — the cleaned text with tags removed
@@ -18,17 +18,31 @@ def parse_chunk_overrides(line: str) -> dict:
         emotion  — override emotion or None
     """
     overrides = {"voice": None, "emotion": None}
+    emotions = []
 
     def _extract(match):
-        key = match.group(1).lower()
-        value = match.group(2).strip()
-        if key in overrides:
-            overrides[key] = value
+        content = match.group(1).strip()
+        if ":" in content:
+            parts = content.split(":", 1)
+            key = parts[0].strip().lower()
+            val = parts[1].strip()
+            if key == "voice":
+                overrides["voice"] = val
+            elif key == "emotion":
+                emotions.append(val)
+        else:
+            # Shorthand emotion direction, e.g. [Bitter laugh]
+            emotions.append(content)
         return ""
 
-    clean = _TAG_RE.sub(_extract, line).strip()
+    # Replace all [...] blocks
+    clean = re.sub(r"\[([^\]]+)\]", _extract, line).strip()
+    
     # Collapse multiple spaces left by removed tags
     clean = re.sub(r"\s{2,}", " ", clean)
+
+    if emotions:
+        overrides["emotion"] = ", ".join(emotions)
 
     return {"text": clean, **overrides}
 
