@@ -1,16 +1,18 @@
 # ============================================================
 # server.py — FastAPI web dashboard for Narrator
+#
+# Generation runs in a subprocess (core/worker.py) because MLX
+# requires GPU operations on the main thread of a process.
 # ============================================================
 
 import asyncio
 import json
 import os
 import shutil
-import threading
+import signal
+import sys
 import time
-from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 import uvicorn
 from fastapi import FastAPI, UploadFile, File, Form, Request
@@ -23,14 +25,7 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 
 import config
-from core.audio import (
-    generate_chunk,
-    get_duration,
-    get_duration_secs,
-    stitch_wavs,
-)
-from core.model import load_tts_model
-from core.script import parse_script
+from core.audio import get_duration, get_duration_secs
 
 # ── App setup ────────────────────────────────────────────────
 
@@ -41,19 +36,16 @@ app.mount("/static", StaticFiles(directory="web"), name="static")
 
 # ── State ────────────────────────────────────────────────────
 
-_model = None
-_model_lock = threading.Lock()
+_worker_process = None  # asyncio.subprocess.Process
 
 # Generation state
 _gen_state = {
     "running": False,
-    "cancel_requested": False,
+    "status": "idle",      # idle | loading | generating | stitching | done | error | cancelled
+    "message": "",
     "current_chunk": 0,
     "total_chunks": 0,
     "chunks_done": [],
-    "status": "idle",      # idle | loading | generating | stitching | done | error | cancelled
-    "message": "",
-    "started_at": None,
     "output_file": None,
 }
 
@@ -71,7 +63,8 @@ def _broadcast(event: str, data: dict):
         except Exception:
             dead.append(q)
     for q in dead:
-        _sse_subscribers.remove(q)
+        if q in _sse_subscribers:
+            _sse_subscribers.remove(q)
 
 
 def _update_state(**kwargs):
@@ -87,23 +80,11 @@ def _update_state(**kwargs):
     })
 
 
-def _get_model():
-    """Load model once (thread-safe)."""
-    global _model
-    with _model_lock:
-        if _model is None:
-            _update_state(status="loading", message="Loading TTS model...")
-            _model = load_tts_model(config.MODEL_PATH)
-            _update_state(status="idle", message="Model ready")
-        return _model
-
-
 # ── Routes: Dashboard ────────────────────────────────────────
 
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard():
-    """Serve the main dashboard page."""
     return FileResponse("web/index.html")
 
 
@@ -130,10 +111,7 @@ async def update_config(request: Request):
     for key in ["voice", "speed", "emotion", "ref_audio", "ref_text",
                  "silence_padding", "normalize_audio", "export_mp3"]:
         if key in data:
-            val = data[key]
-            attr = key.upper()
-            if hasattr(config, attr):
-                setattr(config, attr, val)
+            setattr(config, key.upper(), data[key])
     return {"ok": True}
 
 
@@ -162,12 +140,11 @@ async def save_script(request: Request):
     return {"ok": True, "lines": len([l for l in text.splitlines() if l.strip()])}
 
 
-# ── Routes: Reference voice upload ───────────────────────────
+# ── Routes: Reference voice ─────────────────────────────────
 
 
 @app.get("/api/refs")
 async def list_refs():
-    """List available reference audio files."""
     refs = []
     if os.path.exists(config.REF_DIR):
         for f in sorted(os.listdir(config.REF_DIR)):
@@ -187,14 +164,12 @@ async def upload_ref(
     file: UploadFile = File(...),
     ref_text: str = Form(""),
 ):
-    """Upload a new reference voice WAV."""
     os.makedirs(config.REF_DIR, exist_ok=True)
     dest = os.path.join(config.REF_DIR, file.filename)
     with open(dest, "wb") as f:
         content = await file.read()
         f.write(content)
 
-    # Auto-activate the uploaded ref
     config.REF_AUDIO = dest
     if ref_text:
         config.REF_TEXT = ref_text
@@ -219,136 +194,131 @@ async def activate_ref(request: Request):
     return JSONResponse({"ok": False, "error": "File not found"}, 400)
 
 
-# ── Routes: Generation ───────────────────────────────────────
+# ── Routes: Generation (subprocess-based) ────────────────────
 
 
-def _run_generation(mode: str, text: str | None = None):
-    """Background thread: generate audio chunks and stitch."""
+async def _run_worker(mode: str, text: str = ""):
+    """Spawn core/worker.py as a subprocess and stream progress."""
+    global _worker_process
+
+    # Write config to temp file for the worker
+    config_path = os.path.join("outputs", ".worker_config.json")
+    os.makedirs("outputs", exist_ok=True)
+
+    worker_cfg = {
+        "mode": mode,
+        "text": text,
+        "voice": config.VOICE,
+        "speed": config.SPEED,
+        "emotion": config.EMOTION,
+        "ref_audio": config.REF_AUDIO,
+        "ref_text": config.REF_TEXT,
+        "script_file": config.SCRIPT_FILE,
+        "output_file": config.OUTPUT_FILE,
+        "chunks_dir": config.CHUNKS_DIR,
+        "silence_padding": config.SILENCE_PADDING,
+        "sample_rate": config.SAMPLE_RATE,
+        "normalize_audio": config.NORMALIZE_AUDIO,
+        "export_mp3": config.EXPORT_MP3,
+        "model_path": config.MODEL_PATH,
+    }
+
+    with open(config_path, "w") as f:
+        json.dump(worker_cfg, f)
+
     try:
-        model = _get_model()
+        # Find the Python from the current venv
+        python = sys.executable
 
-        if mode == "batch":
-            if not os.path.exists(config.SCRIPT_FILE):
-                _update_state(running=False, status="error", message="script.txt not found")
-                return
-            chunks = parse_script(config.SCRIPT_FILE)
-        else:
-            # Single mode
-            chunks = [{"text": text or "", "voice": None, "emotion": None}]
-
-        total = len(chunks)
-        if total == 0:
-            _update_state(running=False, status="error", message="No text to generate")
-            return
-
-        os.makedirs(config.CHUNKS_DIR, exist_ok=True)
-        os.makedirs("outputs", exist_ok=True)
-
-        _update_state(
-            total_chunks=total,
-            current_chunk=0,
-            chunks_done=[],
-            status="generating",
+        _worker_process = await asyncio.create_subprocess_exec(
+            python, "core/worker.py", config_path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=os.getcwd(),
         )
 
-        made = []
+        # Read stdout line by line for JSON progress
+        while True:
+            line = await _worker_process.stdout.readline()
+            if not line:
+                break
 
-        for i, chunk in enumerate(chunks):
-            if _gen_state["cancel_requested"]:
-                _update_state(running=False, status="cancelled", message="Generation cancelled")
-                return
-
-            chunk_path = os.path.join(config.CHUNKS_DIR, f"chunk_{i:04d}.wav")
-            voice = chunk["voice"] or config.VOICE
-            emotion = chunk["emotion"] or config.EMOTION
-            preview = chunk["text"][:80]
-
-            _update_state(
-                current_chunk=i + 1,
-                message=f"Generating chunk {i + 1}/{total}: \"{preview}...\"",
-            )
-
-            # Skip existing chunks
-            if os.path.exists(chunk_path):
-                made.append(chunk_path)
-                done = list(_gen_state["chunks_done"])
-                done.append({
-                    "index": i,
-                    "file": f"chunk_{i:04d}.wav",
-                    "duration": get_duration(chunk_path),
-                    "skipped": True,
-                })
-                _update_state(chunks_done=done)
+            line = line.decode("utf-8", errors="replace").strip()
+            if not line:
                 continue
 
-            t0 = time.time()
-            ok = generate_chunk(
-                model,
-                chunk["text"],
-                chunk_path,
-                voice=voice,
-                ref_audio=config.REF_AUDIO,
-                ref_text=config.REF_TEXT,
-                instruct=emotion,
-                speed=config.SPEED,
-                verbose=True,
-            )
+            # Try to parse as JSON progress
+            try:
+                data = json.loads(line)
+                event = data.get("event", "")
 
-            if ok:
-                made.append(chunk_path)
-                elapsed = time.time() - t0
-                done = list(_gen_state["chunks_done"])
-                done.append({
-                    "index": i,
-                    "file": f"chunk_{i:04d}.wav",
-                    "duration": get_duration(chunk_path),
-                    "time": f"{elapsed:.1f}s",
-                    "skipped": False,
-                })
-                _update_state(chunks_done=done)
-            else:
-                done = list(_gen_state["chunks_done"])
-                done.append({
-                    "index": i,
-                    "file": f"chunk_{i:04d}.wav",
-                    "error": True,
-                })
-                _update_state(chunks_done=done)
+                if event in ("status", "chunk_done", "chunk_error"):
+                    _update_state(
+                        status=data.get("status", _gen_state["status"]),
+                        message=data.get("message", _gen_state["message"]),
+                        current_chunk=data.get("current_chunk", _gen_state["current_chunk"]),
+                        total_chunks=data.get("total_chunks", _gen_state["total_chunks"]),
+                        chunks_done=data.get("chunks_done", _gen_state["chunks_done"]),
+                    )
 
-        # Stitch
-        _update_state(status="stitching", message="Stitching chunks...")
+                elif event == "done":
+                    _update_state(
+                        running=False,
+                        status="done",
+                        message=data.get("message", "Complete!"),
+                        output_file=data.get("output_file"),
+                        chunks_done=data.get("chunks_done", _gen_state["chunks_done"]),
+                    )
 
-        output = config.OUTPUT_FILE if mode == "batch" else "outputs/single_output.wav"
+                elif event == "error":
+                    _update_state(
+                        running=False,
+                        status="error",
+                        message=data.get("message", "Generation failed"),
+                        chunks_done=data.get("chunks_done", _gen_state["chunks_done"]),
+                    )
 
-        if made and stitch_wavs(
-            made,
-            output,
-            silence_padding=config.SILENCE_PADDING,
-            sample_rate=config.SAMPLE_RATE,
-            normalize=config.NORMALIZE_AUDIO,
-            export_mp3=config.EXPORT_MP3,
-        ):
-            duration = get_duration(output)
-            _update_state(
-                running=False,
-                status="done",
-                message=f"Complete! Duration: {duration}",
-                output_file=output,
-            )
-        else:
+            except json.JSONDecodeError:
+                # Not JSON — probably model loading output, ignore
+                pass
+
+        # Wait for process to finish
+        await _worker_process.wait()
+
+        # If process exited with error and we haven't already set error state
+        if _worker_process.returncode != 0 and _gen_state["status"] not in ("done", "error", "cancelled"):
+            stderr = await _worker_process.stderr.read()
+            err_msg = stderr.decode("utf-8", errors="replace").strip()[-200:]
             _update_state(
                 running=False,
                 status="error",
-                message="Stitching failed",
+                message=f"Worker crashed: {err_msg}" if err_msg else "Worker process failed",
             )
+
+    except asyncio.CancelledError:
+        # Stop was requested
+        if _worker_process and _worker_process.returncode is None:
+            _worker_process.terminate()
+            await _worker_process.wait()
+        _update_state(running=False, status="cancelled", message="Generation cancelled")
 
     except Exception as e:
         _update_state(running=False, status="error", message=str(e))
 
+    finally:
+        _worker_process = None
+        # Clean up config file
+        if os.path.exists(config_path):
+            os.remove(config_path)
+
+
+_worker_task = None  # asyncio.Task
+
 
 @app.post("/api/generate")
 async def start_generation(request: Request):
-    """Start batch generation in a background thread."""
+    global _worker_task
+
     if _gen_state["running"]:
         return JSONResponse({"ok": False, "error": "Generation already in progress"}, 409)
 
@@ -357,21 +327,39 @@ async def start_generation(request: Request):
     text = data.get("text", "")
 
     _gen_state["running"] = True
-    _gen_state["cancel_requested"] = False
     _gen_state["output_file"] = None
+    _gen_state["chunks_done"] = []
+    _gen_state["current_chunk"] = 0
+    _gen_state["total_chunks"] = 0
 
-    thread = threading.Thread(target=_run_generation, args=(mode, text), daemon=True)
-    thread.start()
+    _update_state(status="loading", message="Starting worker...")
+
+    # Launch worker as async task
+    _worker_task = asyncio.create_task(_run_worker(mode, text))
 
     return {"ok": True, "mode": mode}
 
 
 @app.post("/api/generate/stop")
 async def stop_generation():
-    if _gen_state["running"]:
-        _gen_state["cancel_requested"] = True
-        return {"ok": True, "message": "Cancel requested"}
-    return {"ok": False, "message": "Nothing running"}
+    global _worker_task, _worker_process
+
+    if not _gen_state["running"]:
+        return {"ok": False, "message": "Nothing running"}
+
+    # Cancel the async task (which will terminate the subprocess)
+    if _worker_task and not _worker_task.done():
+        _worker_task.cancel()
+
+    # Also send SIGTERM directly to the worker process
+    if _worker_process and _worker_process.returncode is None:
+        try:
+            _worker_process.terminate()
+        except ProcessLookupError:
+            pass
+
+    _update_state(running=False, status="cancelled", message="Generation cancelled")
+    return {"ok": True, "message": "Cancel requested"}
 
 
 @app.get("/api/generate/progress")
@@ -382,7 +370,9 @@ async def progress_sse(request: Request):
 
     async def event_stream():
         # Send current state immediately
-        yield f"event: progress\ndata: {json.dumps({k: _gen_state[k] for k in ['running', 'status', 'message', 'current_chunk', 'total_chunks', 'chunks_done']})}\n\n"
+        state_snapshot = {k: _gen_state[k] for k in
+                          ["running", "status", "message", "current_chunk", "total_chunks", "chunks_done"]}
+        yield f"event: progress\ndata: {json.dumps(state_snapshot)}\n\n"
 
         try:
             while True:
@@ -425,7 +415,6 @@ async def generation_status():
 
 @app.get("/api/audio/final")
 async def serve_final():
-    """Serve the final stitched audio."""
     for ext in [".wav", ".mp3"]:
         path = config.OUTPUT_FILE.replace(".wav", ext) if ext == ".mp3" else config.OUTPUT_FILE
         if os.path.exists(path):
@@ -435,7 +424,6 @@ async def serve_final():
 
 @app.get("/api/audio/chunk/{filename}")
 async def serve_chunk(filename: str):
-    """Serve an individual chunk WAV."""
     path = os.path.join(config.CHUNKS_DIR, filename)
     if os.path.exists(path):
         return FileResponse(path, media_type="audio/wav")
@@ -444,7 +432,6 @@ async def serve_chunk(filename: str):
 
 @app.get("/api/audio/ref/{filename}")
 async def serve_ref(filename: str):
-    """Serve a reference audio file."""
     path = os.path.join(config.REF_DIR, filename)
     if os.path.exists(path):
         return FileResponse(path)
@@ -453,7 +440,6 @@ async def serve_ref(filename: str):
 
 @app.get("/api/chunks")
 async def list_chunks():
-    """List all generated chunks with metadata."""
     chunks = []
     if os.path.exists(config.CHUNKS_DIR):
         for f in sorted(os.listdir(config.CHUNKS_DIR)):
@@ -468,21 +454,19 @@ async def list_chunks():
 
     final_exists = os.path.exists(config.OUTPUT_FILE)
     mp3_path = config.OUTPUT_FILE.replace(".wav", ".mp3")
-    mp3_exists = os.path.exists(mp3_path)
 
     return {
         "chunks": chunks,
         "final": {
             "exists": final_exists,
             "duration": get_duration(config.OUTPUT_FILE) if final_exists else None,
-            "mp3_exists": mp3_exists,
+            "mp3_exists": os.path.exists(mp3_path),
         },
     }
 
 
 @app.get("/api/download/{format}")
 async def download_output(format: str):
-    """Download final output in WAV or MP3."""
     if format == "mp3":
         path = config.OUTPUT_FILE.replace(".wav", ".mp3")
         media = "audio/mpeg"
@@ -502,7 +486,6 @@ async def download_output(format: str):
 
 @app.post("/api/clear")
 async def clear_outputs():
-    """Delete all generated chunks and outputs."""
     if _gen_state["running"]:
         return JSONResponse({"ok": False, "error": "Generation in progress"}, 409)
 
@@ -519,15 +502,6 @@ async def clear_outputs():
     )
 
     return {"ok": True}
-
-
-# ── Startup ──────────────────────────────────────────────────
-
-
-@app.on_event("startup")
-async def startup():
-    """Pre-load model on server start."""
-    threading.Thread(target=_get_model, daemon=True).start()
 
 
 # ── Main ─────────────────────────────────────────────────────
