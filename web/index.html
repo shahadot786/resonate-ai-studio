@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Narrator — Professional AI Voice Studio</title>
-    <meta name="description" content="High-fidelity local AI voice narration studio powered by Qwen3-TTS.">
+    <title>Narrator — Production AI Voice Studio</title>
+    <meta name="description" content="Local production-grade AI narration studio powered by Qwen3-TTS.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;450;500;650;750&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -12,247 +12,218 @@
 </head>
 <body>
 
-    <!-- ═══ APP CONTAINER ═══ -->
-    <div id="app">
+    <!-- ═══ MAIN APPLICATION WORKSPACE ═══ -->
+    <div id="app-layout">
         
-        <!-- ═══ HEADER ═══ -->
-        <header id="app-header">
-            <div class="header-brand">
-                <span class="logo-badge">🎙️</span>
-                <div class="logo-text">
-                    <h1>Narrator</h1>
-                    <span class="subtext">AI Narrative Studio</span>
+        <!-- ── SIDEBAR CONTROL CONSOLE ── -->
+        <aside id="sidebar">
+            <div class="sidebar-header">
+                <div class="brand">
+                    <span class="brand-icon">🎙️</span>
+                    <div class="brand-text">
+                        <h1>Narrator</h1>
+                        <span class="brand-subtext">AI Studio v3</span>
+                    </div>
                 </div>
-            </div>
-            
-            <div class="header-status">
                 <div class="system-status" id="system-status">
                     <span class="status-dot"></span>
-                    <span class="status-lbl">Initializing...</span>
-                </div>
-            </div>
-        </header>
-
-        <!-- ═══ MAIN CORE GRID ═══ -->
-        <main id="app-content">
-            
-            <!-- ── LEFT COLUMN: Main Workspace ── -->
-            <section class="workspace-panel">
-                <div class="panel-header">
-                    <div class="title-with-badge">
-                        <h2>Script & Narration Editor</h2>
-                        <span class="badge-count" id="chunk-counter">0 Chunks</span>
-                    </div>
-                    <div class="panel-actions">
-                        <span class="word-counter" id="word-counter">0 words</span>
-                        <button class="btn btn-secondary btn-sm" id="btn-save-script">
-                            💾 Save Script
-                        </button>
-                    </div>
-                </div>
-
-                <div class="editor-viewport">
-                    <div class="editor-line-gutter" id="gutter"></div>
-                    <textarea id="script-textarea" spellcheck="false" 
-                        placeholder="Type or paste your storytelling narration script here...&#10;&#10;Instructions:&#10;- Each line acts as one speech chunk.&#10;- Leave empty lines to separate paragraphs.&#10;- Insert inline overrides to change voices or tones dynamically, e.g.:&#10;  [voice:serena] [emotion:Whispered, fearful] I heard footsteps behind me.&#10;  [voice:aiden] [emotion:Quiet Rage] That was my final mistake."></textarea>
-                </div>
-
-                <div class="quick-helpers">
-                    <span class="helper-label">Quick Tag Insert:</span>
-                    <div class="helper-tags">
-                        <button class="tag-insert" data-tag="[voice:aiden]">Aiden (M)</button>
-                        <button class="tag-insert" data-tag="[voice:serena]">Serena (F)</button>
-                        <button class="tag-insert" data-tag="[voice:ryan]">Ryan (M)</button>
-                        <button class="tag-insert" data-tag="[voice:vivian]">Vivian (F)</button>
-                        <button class="tag-insert" data-tag="[emotion:Quiet Rage]">Quiet Rage</button>
-                        <button class="tag-insert" data-tag="[emotion:Betrayal Discovery]">Betrayal</button>
-                        <button class="tag-insert" data-tag="[emotion:Whispered]">Whisper</button>
-                        <button class="tag-insert" data-tag="[emotion:Cold & Detached]">Cold/Detached</button>
-                    </div>
-                </div>
-            </section>
-
-            <!-- ── RIGHT COLUMN: Parameter Control Panel ── -->
-            <aside class="control-sidebar">
-                
-                <!-- Voice Settings Card -->
-                <div class="control-card">
-                    <div class="card-header">
-                        <h3>Voice Preset</h3>
-                    </div>
-                    <div class="card-body">
-                        <div class="form-control">
-                            <label for="select-voice">Active Narrator Voice</label>
-                            <select id="select-voice"></select>
-                        </div>
-                        <div class="form-control">
-                            <label>Narration Speed multiplier: <span id="lbl-speed">1.0x</span></label>
-                            <input type="range" id="slider-speed" min="0.5" max="2.0" step="0.1" value="1.0">
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Reference Voice & Voice Cloning Card -->
-                <div class="control-card">
-                    <div class="card-header">
-                        <h3>Voice Cloning & Reference</h3>
-                    </div>
-                    <div class="card-body">
-                        <div class="form-control">
-                            <label for="select-ref">Reference Voice Profile</label>
-                            <div class="select-with-play">
-                                <select id="select-ref"></select>
-                                <button class="btn btn-secondary btn-icon-only" id="btn-ref-play" title="Play Reference Audio">▶</button>
-                            </div>
-                        </div>
-                        <div class="form-control">
-                            <label for="txt-ref-transcript">Reference Audio Transcript</label>
-                            <textarea id="txt-ref-transcript" rows="2" placeholder="Exact transcription text of what is spoken in the reference audio clip."></textarea>
-                        </div>
-                        <div class="drop-upload-zone" id="drop-zone">
-                            <input type="file" id="input-file-upload" accept=".wav,.mp3,.m4a,.flac" hidden>
-                            <p>Drag file here or <span class="link-browse" id="btn-browse-trigger">browse</span></p>
-                            <span class="upload-hint-sub">WAV or MP3 (5 - 15 seconds)</span>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Emotion & Pacing Card -->
-                <div class="control-card">
-                    <div class="card-header">
-                        <h3>Emotion & Narrative Pacing</h3>
-                    </div>
-                    <div class="card-body">
-                        <div class="form-control">
-                            <label for="select-emotion-preset">Narrative Emotion Presets</label>
-                            <select id="select-emotion-preset">
-                                <option value="">— Custom Instructions —</option>
-                                <optgroup label="Storytelling & Drama Styles">
-                                    <option value="Deep, serious, and emotionally controlled. Speak slowly with gravitas and natural pauses. Begin calm and reflective, gradually build tension, express genuine hurt without melodrama, become intense during betrayal scenes, then finish with quiet confidence and emotional resolution.">🎭 Cinematic Narrator (Default)</option>
-                                    <option value="Warm, intimate, and conversational. Speak as if confiding in a close friend late at night. Natural pace with soft emphasis on emotional words. Gentle but honest.">💬 Intimate Confessional</option>
-                                    <option value="Cold, detached, and matter-of-fact. Deliver with clinical precision, no emotional coloring. The flatness itself conveys the weight of what happened.">🧊 Cold & Detached</option>
-                                </optgroup>
-                                <optgroup label="Betrayal & Deep Emotion">
-                                    <option value="Start calm and trusting, then let disbelief creep in. Build to a moment of stunned silence. Let the hurt land quietly, not loudly. End with a hollow, empty resolve.">💔 Betrayal Discovery</option>
-                                    <option value="Controlled anger simmering beneath every word. Speak with precision and restraint. Each sentence is measured, deliberate. The quietness is more terrifying than shouting.">🔥 Quiet Rage</option>
-                                    <option value="Vulnerable, raw, and exposed. Voice slightly unsteady. Pauses where words fail. Genuine emotional weight without melodrama. Let silence carry meaning.">😢 Raw Vulnerability</option>
-                                    <option value="Bitter and sardonic. Speak with a knowing smile. Every compliment is laced with irony. The humor is a shield against deeper pain.">😏 Bitter Sarcasm</option>
-                                    <option value="Resigned and exhausted. Speak as if you've already accepted the worst. No energy left for anger. Just a tired, hollow truth.">😶 Numb Resignation</option>
-                                </optgroup>
-                                <optgroup label="Pacing & Tension">
-                                    <option value="Slow, deliberate, and suspenseful. Long pauses between key phrases. Build tension with pacing alone. Let the listener lean in.">⏳ Slow Burn Suspense</option>
-                                    <option value="Urgent and intense. Words come faster as the stakes rise. Breathless at climactic moments. Sharp, punchy delivery.">⚡ Urgent & Intense</option>
-                                    <option value="Whispered and secretive. Speak as if someone might overhear. Intimate, conspiratorial. Pull the listener into a private confession.">🤫 Whispered Secret</option>
-                                    <option value="Nostalgic and wistful. Speak as if recalling a distant memory. Bittersweet warmth mixed with longing. Gentle, slightly faded.">🌅 Nostalgic Flashback</option>
-                                    <option value="Authoritative and confident. Speak with the certainty of someone who has survived. Strong, grounded, and empowered. The voice of hard-won wisdom.">👑 Empowered Resolution</option>
-                                </optgroup>
-                            </select>
-                        </div>
-                        <div class="form-control">
-                            <label for="txt-emotion-instructions">Custom Prompts & Directions</label>
-                            <textarea id="txt-emotion-instructions" rows="3" placeholder="Describe the style, delivery tone, emotional arcs, or pacing for the model..."></textarea>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Audio Pipeline Settings Card -->
-                <div class="control-card">
-                    <div class="card-header">
-                        <h3>Audio Engineering Pipeline</h3>
-                    </div>
-                    <div class="card-body">
-                        <div class="pipeline-toggles">
-                            <div class="pipeline-item">
-                                <span class="pipeline-lbl">Silence Padding</span>
-                                <div class="pipeline-input-wrap">
-                                    <input type="number" id="num-silence-padding" min="0" max="5" step="0.1" value="0.8">
-                                    <span class="unit">s</span>
-                                </div>
-                            </div>
-                            <div class="pipeline-item">
-                                <span class="pipeline-lbl">Loudness Normalization (EBU R128)</span>
-                                <label class="ui-switch">
-                                    <input type="checkbox" id="check-normalize" checked>
-                                    <span class="ui-slider"></span>
-                                </label>
-                            </div>
-                            <div class="pipeline-item">
-                                <span class="pipeline-lbl">Convert to MP3 (192kbps)</span>
-                                <label class="ui-switch">
-                                    <input type="checkbox" id="check-export-mp3" checked>
-                                    <span class="ui-slider"></span>
-                                </label>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </aside>
-        </main>
-
-        <!-- ═══ FOOTER & PLAYBACK SUITE ═══ -->
-        <footer id="app-footer">
-            
-            <!-- Generation Actions & Downloads -->
-            <div class="actions-panel">
-                <button class="btn btn-primary btn-lg" id="btn-action-generate">
-                    ⚡ Generate Audio
-                </button>
-                <button class="btn btn-danger btn-lg hidden" id="btn-action-stop">
-                    🛑 Cancel Generation
-                </button>
-                <button class="btn btn-ghost" id="btn-action-clear">
-                    🗑️ Clear Project
-                </button>
-                
-                <div class="panel-divider"></div>
-                
-                <div class="download-group">
-                    <button class="btn btn-accent hidden" id="btn-download-wav">Download WAV</button>
-                    <button class="btn btn-accent hidden" id="btn-download-mp3">Download MP3</button>
+                    <span class="status-lbl">Standby</span>
                 </div>
             </div>
 
-            <!-- Pipeline Status Overlay / Progress -->
-            <div class="status-overlay" id="status-overlay">
-                <div class="progress-container">
+            <div class="sidebar-scrollable-content">
+                
+                <!-- Card: Voice Preset -->
+                <div class="sidebar-card">
+                    <div class="card-headline">Voice Settings</div>
+                    <div class="control-group">
+                        <label for="select-voice">Active Narrator</label>
+                        <select id="select-voice"></select>
+                    </div>
+                    <div class="control-group">
+                        <label class="label-with-value">Speed <span id="lbl-speed">1.0x</span></label>
+                        <input type="range" id="slider-speed" min="0.5" max="2.0" step="0.1" value="1.0">
+                    </div>
+                </div>
+
+                <!-- Card: Reference voice -->
+                <div class="sidebar-card">
+                    <div class="card-headline">Voice Cloning</div>
+                    <div class="control-group">
+                        <label for="select-ref">Reference Profile</label>
+                        <div class="select-row">
+                            <select id="select-ref"></select>
+                            <button class="btn btn-icon" id="btn-ref-play" title="Preview Reference Profile">▶</button>
+                        </div>
+                    </div>
+                    <div class="control-group">
+                        <label for="txt-ref-transcript">Reference Audio Transcript</label>
+                        <textarea id="txt-ref-transcript" rows="2" placeholder="Exact spoken words..."></textarea>
+                    </div>
+                    <div class="upload-dropzone" id="drop-zone">
+                        <input type="file" id="input-file-upload" accept=".wav,.mp3,.m4a,.flac" hidden>
+                        <p>Drop WAV here or <span class="link-color" id="btn-browse-trigger">browse</span></p>
+                    </div>
+                </div>
+
+                <!-- Card: Emotion Presets -->
+                <div class="sidebar-card">
+                    <div class="card-headline">Emotional Arc & Directions</div>
+                    <div class="control-group">
+                        <label for="select-emotion-preset">Narrator Presets</label>
+                        <select id="select-emotion-preset">
+                            <option value="">— Custom Prompts —</option>
+                            <optgroup label="Narration Styles">
+                                <option value="Deep, serious, and emotionally controlled. Speak slowly with gravitas and natural pauses. Begin calm and reflective, gradually build tension, express genuine hurt without melodrama, become intense during betrayal scenes, then finish with quiet confidence and emotional resolution.">🎭 Cinematic Narrator (Default)</option>
+                                <option value="Warm, intimate, and conversational. Speak as if confiding in a close friend late at night. Natural pace with soft emphasis on emotional words. Gentle but honest.">💬 Intimate Confessional</option>
+                                <option value="Cold, detached, and matter-of-fact. Deliver with clinical precision, no emotional coloring. The flatness itself conveys the weight of what happened.">🧊 Cold & Detached</option>
+                            </optgroup>
+                            <optgroup label="Betrayal & Deep Emotion">
+                                <option value="Start calm and trusting, then let disbelief creep in. Build to a moment of stunned silence. Let the hurt land quietly, not loudly. End with a hollow, empty resolve.">💔 Betrayal Discovery</option>
+                                <option value="Controlled anger simmering beneath every word. Speak with precision and restraint. Each sentence is measured, deliberate. The quietness is more terrifying than shouting.">🔥 Quiet Rage</option>
+                                <option value="Vulnerable, raw, and exposed. Voice slightly unsteady. Pauses where words fail. Genuine emotional weight without melodrama. Let silence carry meaning.">😢 Raw Vulnerability</option>
+                                <option value="Bitter and sardonic. Speak with a knowing smile. Every compliment is laced with irony. The humor is a shield against deeper pain.">😏 Bitter Sarcasm</option>
+                                <option value="Resigned and exhausted. Speak as if you've already accepted the worst. No energy left for anger. Just a tired, hollow truth.">😶 Numb Resignation</option>
+                            </optgroup>
+                            <optgroup label="Pacing & Tension">
+                                <option value="Slow, deliberate, and suspenseful. Long pauses between key phrases. Build tension with pacing alone. Let the listener lean in.">⏳ Slow Burn Suspense</option>
+                                <option value="Urgent and intense. Words come faster as the stakes rise. Breathless at climactic moments. Sharp, punchy delivery.">⚡ Urgent & Intense</option>
+                                <option value="Whispered and secretive. Speak as if someone might overhear. Intimate, conspiratorial. Pull the listener into a private confession.">🤫 Whispered Secret</option>
+                                <option value="Nostalgic and wistful. Speak as if recalling a distant memory. Bittersweet warmth mixed with longing. Gentle, slightly faded.">🌅 Nostalgic Flashback</option>
+                                <option value="Authoritative and confident. Speak with the certainty of someone who has survived. Strong, grounded, and empowered. The voice of hard-won wisdom.">👑 Empowered Resolution</option>
+                            </optgroup>
+                        </select>
+                    </div>
+                    <div class="control-group">
+                        <label for="txt-emotion-instructions">Tone Prompt</label>
+                        <textarea id="txt-emotion-instructions" rows="3" placeholder="Acoustic prompt inputs..."></textarea>
+                    </div>
+                </div>
+
+                <!-- Card: Audio Pipeline -->
+                <div class="sidebar-card">
+                    <div class="card-headline">Acoustic Engineering</div>
+                    <div class="pipeline-stack">
+                        <div class="pipeline-row">
+                            <span class="pipeline-lbl">Silence Gap</span>
+                            <div class="pipeline-val-input">
+                                <input type="number" id="num-silence-padding" min="0" max="5" step="0.1" value="0.8">
+                                <span class="unit">s</span>
+                            </div>
+                        </div>
+                        <div class="pipeline-row">
+                            <span class="pipeline-lbl">EBU R128 Normalize</span>
+                            <label class="switch-capsule">
+                                <input type="checkbox" id="check-normalize" checked>
+                                <span class="switch-slider"></span>
+                            </label>
+                        </div>
+                        <div class="pipeline-row">
+                            <span class="pipeline-lbl">MP3 Output</span>
+                            <label class="switch-capsule">
+                                <input type="checkbox" id="check-export-mp3" checked>
+                                <span class="switch-slider"></span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </aside>
+
+        <!-- ── MAIN CONTENT WORKSPACE ── -->
+        <main id="workspace">
+            
+            <!-- Editor Console Toolbar -->
+            <div class="workspace-header">
+                <div class="toolbar-brand">
+                    <h2>Narrator Script Workspace</h2>
+                    <span class="stats-badge" id="chunk-counter">0 Chunks</span>
+                </div>
+                <div class="toolbar-actions">
+                    <span class="stats-text" id="word-counter">0 words</span>
+                    <button class="btn btn-save" id="btn-save-script">💾 Save Changes</button>
+                </div>
+            </div>
+
+            <!-- Workspace Textarea Frame -->
+            <div class="editor-frame">
+                <div class="editor-line-gutter" id="gutter"></div>
+                <textarea id="script-textarea" spellcheck="false" 
+                    placeholder="Begin writing your storytelling script here...&#10;&#10;Key Rules:&#10;- One line of text creates one output speech segment.&#10;- Paragraph breaks are skipped.&#10;- Customize narration presets inline:&#10;  [voice:serena] [emotion:Whispered, fearful] The shadow loomed closer.&#10;  [voice:aiden] [emotion:Quiet Rage] I walked away."></textarea>
+            </div>
+
+            <!-- Tag Injector Helper Shelf -->
+            <div class="tag-shelf">
+                <span class="shelf-label">Insert Tag:</span>
+                <div class="shelf-tags">
+                    <button class="tag-insert" data-tag="[voice:aiden]">Aiden (M)</button>
+                    <button class="tag-insert" data-tag="[voice:serena]">Serena (F)</button>
+                    <button class="tag-insert" data-tag="[voice:ryan]">Ryan (M)</button>
+                    <button class="tag-insert" data-tag="[voice:vivian]">Vivian (F)</button>
+                    <button class="tag-insert" data-tag="[emotion:Quiet Rage]">Quiet Rage</button>
+                    <button class="tag-insert" data-tag="[emotion:Betrayal Discovery]">Betrayal</button>
+                    <button class="tag-insert" data-tag="[emotion:Whispered]">Whisper</button>
+                    <button class="tag-insert" data-tag="[emotion:Cold & Detached]">Detached</button>
+                </div>
+            </div>
+
+            <!-- ── BOTTOM CONTROL CONSOLE & DRAWER ── -->
+            <div class="bottom-console">
+                
+                <!-- Action Controls Panel -->
+                <div class="console-actions">
+                    <button class="btn btn-primary btn-generate" id="btn-action-generate">⚡ Run Generation</button>
+                    <button class="btn btn-danger btn-stop hidden" id="btn-action-stop">🛑 Stop Pipeline</button>
+                    <button class="btn btn-secondary btn-clear" id="btn-action-clear">🗑 Clear Output Files</button>
+                    <div class="action-divider"></div>
+                    <div class="download-pane">
+                        <button class="btn btn-download hidden" id="btn-download-wav">WAV</button>
+                        <button class="btn btn-download hidden" id="btn-download-mp3">MP3</button>
+                    </div>
+                </div>
+
+                <!-- Pipeline Status Progress -->
+                <div class="console-progress" id="status-overlay">
                     <div class="progress-track">
                         <div class="progress-bar-fill" id="progress-bar-fill"></div>
                     </div>
-                    <div class="progress-labels">
-                        <span class="status-msg" id="status-msg">Idle</span>
-                        <span class="status-stats" id="status-stats"></span>
+                    <div class="progress-info">
+                        <span class="status-msg" id="status-msg">System Idle</span>
+                        <span class="status-detail" id="status-stats"></span>
                     </div>
                 </div>
-            </div>
 
-            <!-- Chunk List Display -->
-            <div class="chunk-suite hidden" id="chunk-suite">
-                <div class="chunk-suite-header">
-                    <h4>Generated Narrative Segments</h4>
-                    <span id="chunk-stats-summary" class="summary-lbl"></span>
-                </div>
-                <div class="chunk-rows-container" id="chunk-rows-container"></div>
-            </div>
-
-            <!-- Integrated Audio Player -->
-            <div class="audio-playback-player hidden" id="audio-playback-player">
-                <button class="playback-play-btn" id="btn-playback-toggle">▶</button>
-                <div class="playback-controls">
-                    <div class="playback-metadata">
-                        <span id="playback-title">Full Output</span>
-                        <span id="playback-duration" class="mono-label">—</span>
+                <!-- Collapsible Audio Segments Drawer -->
+                <div class="segments-panel hidden" id="chunk-suite">
+                    <div class="segments-header">
+                        <h3>Segment History</h3>
+                        <span id="chunk-stats-summary"></span>
                     </div>
-                    <div class="playback-timeline-bar">
-                        <input type="range" class="playback-range-input" id="playback-range-input" min="0" max="100" value="0">
-                        <span id="playback-time" class="mono-label">0:00 / 0:00</span>
+                    <div class="segments-list" id="chunk-rows-container"></div>
+                </div>
+
+                <!-- Master Output Audio Player -->
+                <div class="master-player hidden" id="audio-playback-player">
+                    <button class="player-toggle-btn" id="btn-playback-toggle">▶</button>
+                    <div class="player-body">
+                        <div class="player-info">
+                            <span id="playback-title">Full Output</span>
+                            <span id="playback-duration">—</span>
+                        </div>
+                        <div class="player-seeker">
+                            <input type="range" class="timeline-range" id="playback-range-input" min="0" max="100" value="0">
+                            <span id="playback-time">0:00 / 0:00</span>
+                        </div>
                     </div>
                 </div>
-            </div>
 
-        </footer>
+            </div>
+        </main>
+        
     </div>
 
-    <!-- ═══ AUDIO NODES ═══ -->
+    <!-- Hidden Audio Nodes -->
     <audio id="audio-main-node" preload="none"></audio>
     <audio id="audio-ref-node" preload="none"></audio>
 
