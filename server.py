@@ -481,7 +481,21 @@ async def download_output(format: str):
     return JSONResponse({"error": "File not found"}, 404)
 
 
-# ── Routes: Clear / Reset ───────────────────────────────────
+@app.delete("/api/chunks/{filename}")
+async def delete_chunk(filename: str):
+    """Delete a single chunk WAV file."""
+    if _gen_state["running"]:
+        return JSONResponse({"ok": False, "error": "Generation in progress"}, 409)
+    path = os.path.join(config.CHUNKS_DIR, filename)
+    if os.path.exists(path):
+        os.remove(path)
+        # Also remove final output since it's now stale
+        for ext in [".wav", ".mp3"]:
+            p = config.OUTPUT_FILE.replace(".wav", ext) if ext == ".mp3" else config.OUTPUT_FILE
+            if os.path.exists(p):
+                os.remove(p)
+        return {"ok": True}
+    return JSONResponse({"ok": False, "error": "Not found"}, 404)
 
 
 @app.post("/api/clear")
@@ -498,8 +512,12 @@ async def clear_outputs():
 
     _gen_state.update(
         current_chunk=0, total_chunks=0, chunks_done=[],
-        status="idle", message="Outputs cleared", output_file=None,
+        status="idle", message="", output_file=None,
     )
+    _broadcast("progress", {
+        "running": False, "status": "idle", "message": "",
+        "current_chunk": 0, "total_chunks": 0, "chunks_done": [],
+    })
 
     return {"ok": True}
 

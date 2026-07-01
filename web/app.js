@@ -1,603 +1,488 @@
 // ============================================================
-// app.js — Narrator Dashboard Client
+// app.js — Narrator Dashboard Client (v2)
 // ============================================================
 
-const $ = (sel) => document.querySelector(sel);
-const $$ = (sel) => document.querySelectorAll(sel);
+const $ = (s) => document.querySelector(s);
+const $$ = (s) => document.querySelectorAll(s);
 
-// ── DOM refs ────────────────────────────────────────────────
-
-const DOM = {
+const D = {
     // Header
-    modelStatus:    $('#model-status'),
-    statusDot:      $('#model-status .status-dot'),
-    statusText:     $('#model-status .status-text'),
-
+    statusDot:   $('#status .dot'),
+    statusLabel: $('#status .label'),
     // Editor
-    editor:         $('#script-editor'),
-    lineNumbers:    $('#line-numbers'),
-    chunkCount:     $('#chunk-count'),
-    btnSave:        $('#btn-save-script'),
-
+    editor:      $('#editor'),
+    lines:       $('#lines'),
+    stats:       $('#script-stats'),
+    btnSave:     $('#btn-save'),
     // Voice
-    voiceSelect:    $('#voice-select'),
-    speedSlider:    $('#speed-slider'),
-    speedValue:     $('#speed-value'),
-    emotionInput:   $('#emotion-input'),
-
-    // Pipeline
-    silenceInput:   $('#silence-input'),
-    toggleNorm:     $('#toggle-normalize'),
-    toggleMp3:      $('#toggle-mp3'),
-
+    selVoice:    $('#sel-voice'),
+    rngSpeed:    $('#rng-speed'),
+    speedVal:    $('#speed-val'),
     // Ref
-    refCurrent:     $('#ref-current .ref-name'),
-    refTextInput:   $('#ref-text-input'),
-    btnPlayRef:     $('#btn-play-ref'),
-    uploadZone:     $('#upload-zone'),
-    refUpload:      $('#ref-upload'),
-    btnBrowse:      $('#btn-browse'),
-
-    // Generate
-    btnGenerate:    $('#btn-generate'),
-    btnStop:        $('#btn-stop'),
-    btnClear:       $('#btn-clear'),
-
+    selRef:      $('#sel-ref'),
+    btnPlayRef:  $('#btn-play-ref'),
+    inpRefText:  $('#inp-ref-text'),
+    uploadArea:  $('#upload-area'),
+    inpUpload:   $('#inp-upload'),
+    btnBrowse:   $('#btn-browse'),
+    // Emotion
+    selEmotion:  $('#sel-emotion'),
+    inpEmotion:  $('#inp-emotion'),
+    // Pipeline
+    inpSilence:  $('#inp-silence'),
+    chkNorm:     $('#chk-norm'),
+    chkMp3:      $('#chk-mp3'),
+    // Actions
+    btnGen:      $('#btn-gen'),
+    btnStop:     $('#btn-stop'),
+    btnClear:    $('#btn-clear'),
+    btnDlWav:    $('#btn-dl-wav'),
+    btnDlMp3:    $('#btn-dl-mp3'),
     // Progress
-    progressBar:    $('#progress-bar'),
-    progressStatus: $('#progress-status'),
-    progressDetail: $('#progress-detail'),
-
+    progBar:     $('#prog-bar'),
+    progStatus:  $('#prog-status'),
+    progDetail:  $('#prog-detail'),
     // Chunks
-    chunksSection:  $('#chunks-section'),
-    chunksList:     $('#chunks-list'),
-    chunksTotal:    $('#chunks-total'),
-
+    chunkWrap:   $('#chunk-wrap'),
+    chunkList:   $('#chunk-list'),
+    chunkSum:    $('#chunk-summary'),
     // Player
-    playerSection:  $('#player-section'),
-    playerTitle:    $('#player-title'),
-    playerDuration: $('#player-duration'),
-    btnPlayPause:   $('#btn-play-pause'),
-    playerTimeline: $('#player-timeline'),
-    playerTime:     $('#player-time'),
-    btnDownloadWav: $('#btn-download-wav'),
-    btnDownloadMp3: $('#btn-download-mp3'),
-
-    // Audio elements
-    audioPlayer:    $('#audio-player'),
-    audioRef:       $('#audio-ref'),
+    player:      $('#player'),
+    btnPP:       $('#btn-pp'),
+    plTitle:     $('#pl-title'),
+    plDur:       $('#pl-dur'),
+    plSeek:      $('#pl-seek'),
+    plTime:      $('#pl-time'),
+    // Audio
+    audio:       $('#audio'),
+    audioRef:    $('#audio-ref'),
 };
 
-
-// ── State ───────────────────────────────────────────────────
-
-let currentlyPlayingChunk = null;
-let sseSource = null;
-
+let playingChunk = null;
+let sse = null;
 
 // ── Init ────────────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', async () => {
     await loadConfig();
     await loadVoices();
-    await loadScript();
     await loadRefs();
+    await loadScript();
     await loadChunks();
+    setupEditor();
+    setupEvents();
     connectSSE();
-    setupEditorLineNumbers();
-    setupEventListeners();
 });
 
-
-// ── API helpers ─────────────────────────────────────────────
+// ── API ─────────────────────────────────────────────────────
 
 async function api(url, opts = {}) {
-    try {
-        const res = await fetch(url, opts);
-        return await res.json();
-    } catch (e) {
-        console.error('API error:', e);
-        return null;
-    }
+    try { const r = await fetch(url, opts); return await r.json(); }
+    catch (e) { console.error('API:', e); return null; }
+}
+function post(url, data) {
+    return api(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+}
+function del(url) {
+    return api(url, { method: 'DELETE' });
 }
 
-async function apiPost(url, data) {
-    return api(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
-    });
-}
-
-
-// ── Load config ─────────────────────────────────────────────
+// ── Config ──────────────────────────────────────────────────
 
 async function loadConfig() {
-    const cfg = await api('/api/config');
-    if (!cfg) return;
+    const c = await api('/api/config');
+    if (!c) return;
+    D.rngSpeed.value = c.speed;
+    D.speedVal.textContent = c.speed + '×';
+    D.inpEmotion.value = c.emotion || '';
+    D.inpSilence.value = c.silence_padding;
+    D.chkNorm.checked = c.normalize_audio;
+    D.chkMp3.checked = c.export_mp3;
+    D.inpRefText.value = c.ref_text || '';
 
-    DOM.speedSlider.value = cfg.speed;
-    DOM.speedValue.textContent = cfg.speed;
-    DOM.emotionInput.value = cfg.emotion || '';
-    DOM.silenceInput.value = cfg.silence_padding;
-    DOM.toggleNorm.checked = cfg.normalize_audio;
-    DOM.toggleMp3.checked = cfg.export_mp3;
-    DOM.refTextInput.value = cfg.ref_text || '';
+    // Try to select matching emotion preset
+    selectEmotionPreset(c.emotion);
+}
+
+function selectEmotionPreset(text) {
+    if (!text) { D.selEmotion.value = ''; return; }
+    const opts = D.selEmotion.options;
+    for (let i = 0; i < opts.length; i++) {
+        if (opts[i].value === text) { D.selEmotion.value = text; return; }
+    }
+    D.selEmotion.value = '';
 }
 
 async function loadVoices() {
     const data = await api('/api/voices');
-    if (!data) return;
-
     const cfg = await api('/api/config');
-    DOM.voiceSelect.innerHTML = '';
-
+    if (!data) return;
+    D.selVoice.innerHTML = '';
     data.voices.forEach(v => {
-        const opt = document.createElement('option');
-        opt.value = v;
-        opt.textContent = v.charAt(0).toUpperCase() + v.slice(1);
-        if (cfg && v === cfg.voice) opt.selected = true;
-        DOM.voiceSelect.appendChild(opt);
+        const o = document.createElement('option');
+        o.value = v;
+        o.textContent = v.charAt(0).toUpperCase() + v.slice(1);
+        if (cfg && v === cfg.voice) o.selected = true;
+        D.selVoice.appendChild(o);
     });
 }
-
-
-// ── Load script ─────────────────────────────────────────────
-
-async function loadScript() {
-    const data = await api('/api/script');
-    if (data) {
-        DOM.editor.value = data.text || '';
-        updateLineNumbers();
-        updateChunkCount();
-    }
-}
-
-async function saveScript() {
-    const text = DOM.editor.value;
-    const data = await apiPost('/api/script', { text });
-    if (data && data.ok) {
-        toast('Script saved', 'success');
-        updateChunkCount();
-    }
-}
-
-
-// ── Load refs ───────────────────────────────────────────────
 
 async function loadRefs() {
     const data = await api('/api/refs');
-    if (data) {
-        const active = data.refs.find(r => r.active);
-        DOM.refCurrent.textContent = active ? active.name : data.current;
-    }
-}
-
-
-// ── Load chunks ─────────────────────────────────────────────
-
-async function loadChunks() {
-    const data = await api('/api/chunks');
     if (!data) return;
-
-    if (data.chunks.length > 0) {
-        DOM.chunksSection.classList.remove('hidden');
-        DOM.chunksTotal.textContent = `${data.chunks.length} chunks`;
-        renderChunkPills(data.chunks);
-    }
-
-    if (data.final.exists) {
-        showPlayer(data.final.duration, data.final.mp3_exists);
-    }
-}
-
-function renderChunkPills(chunks) {
-    DOM.chunksList.innerHTML = '';
-    chunks.forEach((c, i) => {
-        const pill = document.createElement('button');
-        pill.className = 'chunk-pill done';
-        pill.innerHTML = `<span class="pill-icon">▶</span> ${c.name.replace('.wav', '')} <span style="opacity:0.5">${c.duration}</span>`;
-        pill.onclick = () => playChunk(c.name, pill);
-        DOM.chunksList.appendChild(pill);
+    D.selRef.innerHTML = '';
+    data.refs.forEach(r => {
+        const o = document.createElement('option');
+        o.value = r.path;
+        o.textContent = `${r.name}  (${r.duration})`;
+        if (r.active) o.selected = true;
+        D.selRef.appendChild(o);
     });
 }
 
-function playChunk(filename, pillEl) {
-    // Remove playing state from all pills
-    $$('.chunk-pill.playing').forEach(p => p.classList.remove('playing'));
-
-    const audio = DOM.audioPlayer;
-    audio.src = `/api/audio/chunk/${filename}`;
-    audio.play();
-
-    if (pillEl) pillEl.classList.add('playing');
-    currentlyPlayingChunk = filename;
-
-    audio.onended = () => {
-        if (pillEl) pillEl.classList.remove('playing');
-        currentlyPlayingChunk = null;
-    };
+function saveConfig() {
+    post('/api/config', {
+        voice: D.selVoice.value,
+        speed: parseFloat(D.rngSpeed.value),
+        emotion: D.inpEmotion.value,
+        ref_audio: D.selRef.value,
+        ref_text: D.inpRefText.value,
+        silence_padding: parseFloat(D.inpSilence.value),
+        normalize_audio: D.chkNorm.checked,
+        export_mp3: D.chkMp3.checked,
+    });
 }
 
+// ── Script ──────────────────────────────────────────────────
+
+async function loadScript() {
+    const d = await api('/api/script');
+    if (d) { D.editor.value = d.text || ''; updateLines(); updateStats(); }
+}
+
+async function saveScript() {
+    const d = await post('/api/script', { text: D.editor.value });
+    if (d && d.ok) { toast('Saved', 'ok'); updateStats(); }
+}
 
 // ── Editor ──────────────────────────────────────────────────
 
-function setupEditorLineNumbers() {
-    updateLineNumbers();
-    DOM.editor.addEventListener('input', () => {
-        updateLineNumbers();
-        updateChunkCount();
+function setupEditor() {
+    updateLines();
+    D.editor.addEventListener('input', () => { updateLines(); updateStats(); });
+    D.editor.addEventListener('scroll', () => { D.lines.scrollTop = D.editor.scrollTop; });
+}
+
+function updateLines() {
+    const ls = D.editor.value.split('\n');
+    let h = '';
+    for (let i = 0; i < ls.length; i++)
+        h += `<div style="opacity:${ls[i].trim() ? 1 : .3}">${i + 1}</div>`;
+    D.lines.innerHTML = h;
+}
+
+function updateStats() {
+    const ls = D.editor.value.split('\n').filter(l => l.trim());
+    const wc = ls.reduce((a, l) => a + l.trim().split(/\s+/).length, 0);
+    const est = Math.ceil(wc / 150); // ~150 words/min narration
+    D.stats.textContent = `${ls.length} chunks · ${wc} words · ~${est} min`;
+}
+
+// ── Refs ────────────────────────────────────────────────────
+
+function setupUpload() {
+    D.btnBrowse.addEventListener('click', e => { e.preventDefault(); D.inpUpload.click(); });
+    D.uploadArea.addEventListener('click', e => { if (e.target !== D.btnBrowse) D.inpUpload.click(); });
+    D.uploadArea.addEventListener('dragover', e => { e.preventDefault(); D.uploadArea.classList.add('drag'); });
+    D.uploadArea.addEventListener('dragleave', () => D.uploadArea.classList.remove('drag'));
+    D.uploadArea.addEventListener('drop', e => {
+        e.preventDefault(); D.uploadArea.classList.remove('drag');
+        if (e.dataTransfer.files[0]) uploadRef(e.dataTransfer.files[0]);
     });
-    DOM.editor.addEventListener('scroll', () => {
-        DOM.lineNumbers.scrollTop = DOM.editor.scrollTop;
+    D.inpUpload.addEventListener('change', () => { if (D.inpUpload.files[0]) uploadRef(D.inpUpload.files[0]); });
+    D.btnPlayRef.addEventListener('click', () => {
+        if (D.selRef.value) {
+            const name = D.selRef.selectedOptions[0]?.textContent.split('  ')[0];
+            D.audioRef.src = `/api/audio/ref/${name}`;
+            D.audioRef.play();
+        }
     });
 }
 
-function updateLineNumbers() {
-    const lines = DOM.editor.value.split('\n');
-    let html = '';
-    for (let i = 0; i < lines.length; i++) {
-        const isBlank = !lines[i].trim();
-        html += `<div style="opacity:${isBlank ? 0.3 : 1}">${i + 1}</div>`;
-    }
-    DOM.lineNumbers.innerHTML = html;
+async function uploadRef(file) {
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('ref_text', D.inpRefText.value);
+    toast('Uploading…', 'ok');
+    try {
+        const r = await fetch('/api/refs/upload', { method: 'POST', body: fd });
+        const d = await r.json();
+        if (d.ok) { toast(`Uploaded: ${d.name}`, 'ok'); await loadRefs(); }
+        else toast('Upload failed', 'err');
+    } catch { toast('Upload failed', 'err'); }
 }
 
-function updateChunkCount() {
-    const lines = DOM.editor.value.split('\n').filter(l => l.trim());
-    DOM.chunkCount.textContent = `${lines.length} chunk${lines.length !== 1 ? 's' : ''}`;
-}
-
-
-// ── Save config on change ───────────────────────────────────
-
-function saveConfig() {
-    apiPost('/api/config', {
-        voice: DOM.voiceSelect.value,
-        speed: parseFloat(DOM.speedSlider.value),
-        emotion: DOM.emotionInput.value,
-        silence_padding: parseFloat(DOM.silenceInput.value),
-        normalize_audio: DOM.toggleNorm.checked,
-        export_mp3: DOM.toggleMp3.checked,
-        ref_text: DOM.refTextInput.value,
-    });
-}
-
-
-// ── SSE (real-time progress) ────────────────────────────────
+// ── SSE ─────────────────────────────────────────────────────
 
 function connectSSE() {
-    if (sseSource) sseSource.close();
-
-    sseSource = new EventSource('/api/generate/progress');
-
-    sseSource.addEventListener('progress', (e) => {
-        const data = JSON.parse(e.data);
-        handleProgress(data);
-    });
-
-    sseSource.onerror = () => {
-        DOM.statusDot.className = 'status-dot error';
-        DOM.statusText.textContent = 'Disconnected';
+    if (sse) sse.close();
+    sse = new EventSource('/api/generate/progress');
+    sse.addEventListener('progress', e => handleProgress(JSON.parse(e.data)));
+    sse.onopen = () => { D.statusDot.className = 'dot ok'; D.statusLabel.textContent = 'Ready'; };
+    sse.onerror = () => {
+        D.statusDot.className = 'dot err'; D.statusLabel.textContent = 'Disconnected';
         setTimeout(connectSSE, 3000);
-    };
-
-    sseSource.onopen = () => {
-        DOM.statusDot.className = 'status-dot ready';
-        DOM.statusText.textContent = 'Connected';
     };
 }
 
-function handleProgress(data) {
-    const { running, status, message, current_chunk, total_chunks, chunks_done } = data;
+function handleProgress(d) {
+    const { running, status, message, current_chunk, total_chunks, chunks_done } = d;
 
     // Status text
-    DOM.progressStatus.textContent = message || statusLabel(status);
+    D.progStatus.textContent = message || statusText(status);
 
-    // Status dot
-    if (status === 'loading') {
-        DOM.statusDot.className = 'status-dot';
-        DOM.statusText.textContent = 'Loading model...';
-    } else if (running) {
-        DOM.statusDot.className = 'status-dot';
-        DOM.statusText.textContent = 'Generating...';
-    } else if (status === 'done') {
-        DOM.statusDot.className = 'status-dot ready';
-        DOM.statusText.textContent = 'Ready';
-    } else if (status === 'error') {
-        DOM.statusDot.className = 'status-dot error';
-        DOM.statusText.textContent = 'Error';
-    } else {
-        DOM.statusDot.className = 'status-dot ready';
-        DOM.statusText.textContent = 'Ready';
-    }
+    // Dot
+    if (running) { D.statusDot.className = 'dot'; D.statusLabel.textContent = statusText(status); }
+    else if (status === 'error') { D.statusDot.className = 'dot err'; D.statusLabel.textContent = 'Error'; }
+    else { D.statusDot.className = 'dot ok'; D.statusLabel.textContent = 'Ready'; }
 
     // Progress bar
     if (total_chunks > 0) {
         const pct = Math.round((current_chunk / total_chunks) * 100);
-        DOM.progressBar.style.width = `${pct}%`;
-        DOM.progressDetail.textContent = `${current_chunk} / ${total_chunks}`;
-
-        if (running) {
-            DOM.progressBar.classList.add('active');
-        } else {
-            DOM.progressBar.classList.remove('active');
-        }
+        D.progBar.style.width = pct + '%';
+        D.progDetail.textContent = `${current_chunk}/${total_chunks} chunks · ${pct}%`;
+        D.progBar.classList.toggle('active', running);
     } else {
-        DOM.progressBar.style.width = '0%';
-        DOM.progressBar.classList.remove('active');
-        DOM.progressDetail.textContent = '';
+        D.progBar.style.width = '0%';
+        D.progBar.classList.remove('active');
+        D.progDetail.textContent = '';
     }
 
     // Buttons
-    if (running) {
-        DOM.btnGenerate.classList.add('hidden');
-        DOM.btnStop.classList.remove('hidden');
-    } else {
-        DOM.btnGenerate.classList.remove('hidden');
-        DOM.btnStop.classList.add('hidden');
-    }
+    D.btnGen.classList.toggle('hidden', running);
+    D.btnStop.classList.toggle('hidden', !running);
 
-    // Chunks done
+    // Chunk list
     if (chunks_done && chunks_done.length > 0) {
-        DOM.chunksSection.classList.remove('hidden');
-        DOM.chunksTotal.textContent = `${chunks_done.length} / ${total_chunks}`;
-
-        DOM.chunksList.innerHTML = '';
-        chunks_done.forEach(c => {
-            const pill = document.createElement('button');
-            pill.className = `chunk-pill ${c.error ? 'error' : 'done'}`;
-            const icon = c.error ? '✗' : (c.skipped ? '⏭' : '✓');
-            const dur = c.duration || '';
-            const timeStr = c.time ? ` · ${c.time}` : '';
-            pill.innerHTML = `<span class="pill-icon">${icon}</span> ${c.file.replace('.wav', '')} <span style="opacity:0.5">${dur}${timeStr}</span>`;
-            if (!c.error) {
-                pill.onclick = () => playChunk(c.file, pill);
-            }
-            DOM.chunksList.appendChild(pill);
-        });
+        renderChunks(chunks_done, total_chunks);
     }
 
-    // Done — show player
-    if (status === 'done' && !running) {
-        loadChunks();
+    // Done
+    if (status === 'done' && !running) { loadChunks(); }
+}
+
+function statusText(s) {
+    return { idle: 'Ready', loading: 'Loading model…', generating: 'Generating…',
+             stitching: 'Stitching audio…', done: 'Complete', error: 'Error',
+             cancelled: 'Cancelled' }[s] || s;
+}
+
+// ── Chunks ──────────────────────────────────────────────────
+
+async function loadChunks() {
+    const d = await api('/api/chunks');
+    if (!d) return;
+    if (d.chunks.length > 0) {
+        D.chunkWrap.classList.remove('hidden');
+        D.chunkSum.textContent = `${d.chunks.length} chunks`;
+        renderChunkFiles(d.chunks);
+    }
+    if (d.final.exists) {
+        showPlayer(d.final.duration, d.final.mp3_exists);
+    } else {
+        D.btnDlWav.classList.add('hidden');
+        D.btnDlMp3.classList.add('hidden');
     }
 }
 
-function statusLabel(status) {
-    const labels = {
-        idle: 'Ready',
-        loading: 'Loading model...',
-        generating: 'Generating...',
-        stitching: 'Stitching audio...',
-        done: 'Complete!',
-        error: 'Error',
-        cancelled: 'Cancelled',
+function renderChunks(chunks, total) {
+    D.chunkWrap.classList.remove('hidden');
+    D.chunkSum.textContent = `${chunks.length}/${total}`;
+    D.chunkList.innerHTML = '';
+    chunks.forEach((c, i) => {
+        const row = document.createElement('div');
+        row.className = `chunk-row ${c.error ? 'err' : ''}`;
+        const icon = c.error ? '✗' : (c.skipped ? '⏭' : '✓');
+        const dur = c.duration || '';
+        const tm = c.time ? c.time : '';
+        row.innerHTML = `
+            <span class="chunk-idx">${i + 1}</span>
+            <span class="chunk-icon" title="Play">${c.error ? '✗' : '▶'}</span>
+            <span class="chunk-text">${c.file.replace('.wav', '')}</span>
+            <span class="chunk-dur">${dur}</span>
+            <span class="chunk-time">${tm}</span>
+            <button class="chunk-del" title="Delete">✕</button>
+        `;
+        if (!c.error) {
+            row.querySelector('.chunk-icon').onclick = () => playChunk(c.file, row);
+        }
+        row.querySelector('.chunk-del').onclick = (e) => { e.stopPropagation(); deleteChunk(c.file); };
+        D.chunkList.appendChild(row);
+    });
+}
+
+function renderChunkFiles(chunks) {
+    D.chunkList.innerHTML = '';
+    chunks.forEach((c, i) => {
+        const row = document.createElement('div');
+        row.className = 'chunk-row';
+        row.innerHTML = `
+            <span class="chunk-idx">${i + 1}</span>
+            <span class="chunk-icon" title="Play">▶</span>
+            <span class="chunk-text">${c.name.replace('.wav', '')}</span>
+            <span class="chunk-dur">${c.duration}</span>
+            <span class="chunk-time"></span>
+            <button class="chunk-del" title="Delete">✕</button>
+        `;
+        row.querySelector('.chunk-icon').onclick = () => playChunk(c.name, row);
+        row.querySelector('.chunk-del').onclick = (e) => { e.stopPropagation(); deleteChunk(c.name); };
+        D.chunkList.appendChild(row);
+    });
+}
+
+function playChunk(file, row) {
+    $$('.chunk-row.playing').forEach(r => r.classList.remove('playing'));
+    D.audio.src = `/api/audio/chunk/${file}`;
+    D.audio.play();
+    if (row) row.classList.add('playing');
+    playingChunk = file;
+    D.player.classList.remove('hidden');
+    D.plTitle.textContent = file.replace('.wav', '');
+    D.btnPP.textContent = '⏸';
+    D.audio.onended = () => {
+        if (row) row.classList.remove('playing');
+        playingChunk = null;
+        D.btnPP.textContent = '▶';
     };
-    return labels[status] || status;
 }
 
+async function deleteChunk(file) {
+    const d = await del(`/api/chunks/${file}`);
+    if (d && d.ok) {
+        toast('Deleted ' + file, 'ok');
+        await loadChunks();
+    } else {
+        toast('Delete failed', 'err');
+    }
+}
+
+// ── Player ──────────────────────────────────────────────────
+
+function showPlayer(dur, hasMp3) {
+    D.player.classList.remove('hidden');
+    D.plDur.textContent = dur || '';
+    D.plTitle.textContent = 'Final Output';
+    D.btnDlWav.classList.remove('hidden');
+    D.btnDlMp3.classList.toggle('hidden', !hasMp3);
+}
+
+function setupPlayer() {
+    D.btnPP.addEventListener('click', () => {
+        if (!D.audio.src || !playingChunk) {
+            D.audio.src = '/api/audio/final';
+            D.plTitle.textContent = 'Final Output';
+        }
+        if (D.audio.paused) { D.audio.play(); D.btnPP.textContent = '⏸'; }
+        else { D.audio.pause(); D.btnPP.textContent = '▶'; }
+    });
+    D.audio.addEventListener('timeupdate', () => {
+        if (!D.audio.duration) return;
+        D.plSeek.value = (D.audio.currentTime / D.audio.duration) * 100;
+        D.plTime.textContent = `${fmt(D.audio.currentTime)} / ${fmt(D.audio.duration)}`;
+    });
+    D.audio.addEventListener('ended', () => {
+        D.btnPP.textContent = '▶'; playingChunk = null;
+        $$('.chunk-row.playing').forEach(r => r.classList.remove('playing'));
+    });
+    D.audio.addEventListener('play', () => { D.btnPP.textContent = '⏸'; D.player.classList.remove('hidden'); });
+    D.plSeek.addEventListener('input', () => {
+        if (D.audio.duration) D.audio.currentTime = (D.plSeek.value / 100) * D.audio.duration;
+    });
+}
+
+function fmt(s) { return Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0'); }
 
 // ── Generate ────────────────────────────────────────────────
 
-async function startGeneration() {
-    // Auto-save script first
+async function startGen() {
     await saveScript();
-
-    // Save current settings
     saveConfig();
+    const d = await post('/api/generate', { mode: 'batch' });
+    if (d && !d.ok) toast(d.error || 'Failed', 'err');
+}
 
-    const data = await apiPost('/api/generate', { mode: 'batch' });
-    if (data && !data.ok) {
-        toast(data.error || 'Failed to start', 'error');
+async function stopGen() {
+    await post('/api/generate/stop', {});
+    toast('Cancelling…', 'err');
+}
+
+async function clearAll() {
+    if (!confirm('Delete ALL generated chunks and outputs?')) return;
+    const d = await post('/api/clear', {});
+    if (d && d.ok) {
+        D.chunkWrap.classList.add('hidden');
+        D.chunkList.innerHTML = '';
+        D.player.classList.add('hidden');
+        D.btnDlWav.classList.add('hidden');
+        D.btnDlMp3.classList.add('hidden');
+        D.progBar.style.width = '0%';
+        D.progDetail.textContent = '';
+        D.progStatus.textContent = 'Ready';
+        toast('All cleared', 'ok');
     }
 }
 
-async function stopGeneration() {
-    await apiPost('/api/generate/stop', {});
-    toast('Cancelling...', 'error');
-}
+// ── Toast ───────────────────────────────────────────────────
 
-async function clearOutputs() {
-    if (!confirm('Delete all generated chunks and outputs?')) return;
-    const data = await apiPost('/api/clear', {});
-    if (data && data.ok) {
-        DOM.chunksSection.classList.add('hidden');
-        DOM.playerSection.classList.add('hidden');
-        DOM.progressBar.style.width = '0%';
-        DOM.progressDetail.textContent = '';
-        DOM.progressStatus.textContent = 'Ready';
-        toast('Outputs cleared', 'success');
-    }
-}
-
-
-// ── Audio Player ────────────────────────────────────────────
-
-function showPlayer(duration, hasMp3) {
-    DOM.playerSection.classList.remove('hidden');
-    DOM.playerDuration.textContent = duration || '';
-    DOM.playerTitle.textContent = 'Final Output';
-
-    if (!hasMp3) {
-        DOM.btnDownloadMp3.classList.add('hidden');
-    } else {
-        DOM.btnDownloadMp3.classList.remove('hidden');
-    }
-}
-
-function setupPlayerControls() {
-    const audio = DOM.audioPlayer;
-
-    DOM.btnPlayPause.addEventListener('click', () => {
-        // Load final output if not already playing a chunk
-        if (!audio.src || !currentlyPlayingChunk) {
-            audio.src = '/api/audio/final';
-            DOM.playerTitle.textContent = 'Final Output';
-        }
-
-        if (audio.paused) {
-            audio.play();
-            DOM.btnPlayPause.textContent = '⏸';
-        } else {
-            audio.pause();
-            DOM.btnPlayPause.textContent = '▶';
-        }
-    });
-
-    audio.addEventListener('timeupdate', () => {
-        if (!audio.duration) return;
-        const pct = (audio.currentTime / audio.duration) * 100;
-        DOM.playerTimeline.value = pct;
-        DOM.playerTime.textContent = `${fmtTime(audio.currentTime)} / ${fmtTime(audio.duration)}`;
-    });
-
-    audio.addEventListener('ended', () => {
-        DOM.btnPlayPause.textContent = '▶';
-        currentlyPlayingChunk = null;
-        $$('.chunk-pill.playing').forEach(p => p.classList.remove('playing'));
-    });
-
-    audio.addEventListener('play', () => {
-        DOM.btnPlayPause.textContent = '⏸';
-        DOM.playerSection.classList.remove('hidden');
-    });
-
-    DOM.playerTimeline.addEventListener('input', () => {
-        if (audio.duration) {
-            audio.currentTime = (DOM.playerTimeline.value / 100) * audio.duration;
-        }
-    });
-}
-
-function fmtTime(secs) {
-    const m = Math.floor(secs / 60);
-    const s = Math.floor(secs % 60);
-    return `${m}:${s.toString().padStart(2, '0')}`;
-}
-
-
-// ── Upload reference voice ──────────────────────────────────
-
-function setupUpload() {
-    DOM.btnBrowse.addEventListener('click', (e) => {
-        e.preventDefault();
-        DOM.refUpload.click();
-    });
-
-    DOM.uploadZone.addEventListener('click', (e) => {
-        if (e.target !== DOM.btnBrowse) {
-            DOM.refUpload.click();
-        }
-    });
-
-    DOM.uploadZone.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        DOM.uploadZone.classList.add('dragover');
-    });
-
-    DOM.uploadZone.addEventListener('dragleave', () => {
-        DOM.uploadZone.classList.remove('dragover');
-    });
-
-    DOM.uploadZone.addEventListener('drop', (e) => {
-        e.preventDefault();
-        DOM.uploadZone.classList.remove('dragover');
-        const file = e.dataTransfer.files[0];
-        if (file) uploadRefFile(file);
-    });
-
-    DOM.refUpload.addEventListener('change', () => {
-        const file = DOM.refUpload.files[0];
-        if (file) uploadRefFile(file);
-    });
-
-    DOM.btnPlayRef.addEventListener('click', () => {
-        const refName = DOM.refCurrent.textContent;
-        if (refName && refName !== '—') {
-            DOM.audioRef.src = `/api/audio/ref/${refName}`;
-            DOM.audioRef.play();
-        }
-    });
-}
-
-async function uploadRefFile(file) {
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('ref_text', DOM.refTextInput.value);
-
-    toast('Uploading reference voice...', 'success');
-
-    try {
-        const res = await fetch('/api/refs/upload', {
-            method: 'POST',
-            body: formData,
-        });
-        const data = await res.json();
-        if (data.ok) {
-            DOM.refCurrent.textContent = data.name;
-            toast(`Reference voice uploaded: ${data.name}`, 'success');
-        } else {
-            toast('Upload failed', 'error');
-        }
-    } catch (e) {
-        toast('Upload failed', 'error');
-    }
-}
-
-
-// ── Toast notifications ─────────────────────────────────────
-
-function toast(msg, type = 'info') {
+function toast(msg, type = '') {
     const el = document.createElement('div');
     el.className = `toast ${type}`;
     el.textContent = msg;
     document.body.appendChild(el);
-    setTimeout(() => el.remove(), 3200);
+    setTimeout(() => el.remove(), 3000);
 }
 
+// ── Events ──────────────────────────────────────────────────
 
-// ── Event listeners ─────────────────────────────────────────
-
-function setupEventListeners() {
-    // Save script
-    DOM.btnSave.addEventListener('click', saveScript);
-
-    // Ctrl+S to save
-    document.addEventListener('keydown', (e) => {
-        if ((e.metaKey || e.ctrlKey) && e.key === 's') {
-            e.preventDefault();
-            saveScript();
-        }
+function setupEvents() {
+    // Save
+    D.btnSave.addEventListener('click', saveScript);
+    document.addEventListener('keydown', e => {
+        if ((e.metaKey || e.ctrlKey) && e.key === 's') { e.preventDefault(); saveScript(); }
     });
 
-    // Config changes
-    DOM.voiceSelect.addEventListener('change', saveConfig);
-    DOM.speedSlider.addEventListener('input', () => {
-        DOM.speedValue.textContent = DOM.speedSlider.value;
+    // Config auto-save
+    D.selVoice.addEventListener('change', saveConfig);
+    D.rngSpeed.addEventListener('input', () => { D.speedVal.textContent = D.rngSpeed.value + '×'; saveConfig(); });
+    D.inpSilence.addEventListener('change', saveConfig);
+    D.chkNorm.addEventListener('change', saveConfig);
+    D.chkMp3.addEventListener('change', saveConfig);
+    D.inpRefText.addEventListener('change', saveConfig);
+
+    // Ref voice select → activate
+    D.selRef.addEventListener('change', () => {
+        post('/api/refs/activate', { path: D.selRef.value, ref_text: D.inpRefText.value });
+    });
+
+    // Emotion preset → fill textarea
+    D.selEmotion.addEventListener('change', () => {
+        const v = D.selEmotion.value;
+        if (v) D.inpEmotion.value = v;
         saveConfig();
     });
-    DOM.emotionInput.addEventListener('change', saveConfig);
-    DOM.silenceInput.addEventListener('change', saveConfig);
-    DOM.toggleNorm.addEventListener('change', saveConfig);
-    DOM.toggleMp3.addEventListener('change', saveConfig);
-    DOM.refTextInput.addEventListener('change', saveConfig);
+    D.inpEmotion.addEventListener('change', saveConfig);
 
     // Generate
-    DOM.btnGenerate.addEventListener('click', startGeneration);
-    DOM.btnStop.addEventListener('click', stopGeneration);
-    DOM.btnClear.addEventListener('click', clearOutputs);
+    D.btnGen.addEventListener('click', startGen);
+    D.btnStop.addEventListener('click', stopGen);
+    D.btnClear.addEventListener('click', clearAll);
 
     // Downloads
-    DOM.btnDownloadWav.addEventListener('click', () => {
-        window.open('/api/download/wav', '_blank');
-    });
-    DOM.btnDownloadMp3.addEventListener('click', () => {
-        window.open('/api/download/mp3', '_blank');
-    });
+    D.btnDlWav.addEventListener('click', () => window.open('/api/download/wav', '_blank'));
+    D.btnDlMp3.addEventListener('click', () => window.open('/api/download/mp3', '_blank'));
 
     // Player
-    setupPlayerControls();
+    setupPlayer();
 
     // Upload
     setupUpload();
