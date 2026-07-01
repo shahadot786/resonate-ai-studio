@@ -1,489 +1,708 @@
 // ============================================================
-// app.js — Narrator Dashboard Client (v2)
+// app.js — Narrator Dashboard Logic (v3 Premium Edition)
 // ============================================================
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => document.querySelectorAll(s);
 
-const D = {
-    // Header
-    statusDot:   $('#status .dot'),
-    statusLabel: $('#status .label'),
-    // Editor
-    editor:      $('#editor'),
-    lines:       $('#lines'),
-    stats:       $('#script-stats'),
-    btnSave:     $('#btn-save'),
-    // Voice
-    selVoice:    $('#sel-voice'),
-    rngSpeed:    $('#rng-speed'),
-    speedVal:    $('#speed-val'),
-    // Ref
-    selRef:      $('#sel-ref'),
-    btnPlayRef:  $('#btn-play-ref'),
-    inpRefText:  $('#inp-ref-text'),
-    uploadArea:  $('#upload-area'),
-    inpUpload:   $('#inp-upload'),
-    btnBrowse:   $('#btn-browse'),
-    // Emotion
-    selEmotion:  $('#sel-emotion'),
-    inpEmotion:  $('#inp-emotion'),
-    // Pipeline
-    inpSilence:  $('#inp-silence'),
-    chkNorm:     $('#chk-norm'),
-    chkMp3:      $('#chk-mp3'),
-    // Actions
-    btnGen:      $('#btn-gen'),
-    btnStop:     $('#btn-stop'),
-    btnClear:    $('#btn-clear'),
-    btnDlWav:    $('#btn-dl-wav'),
-    btnDlMp3:    $('#btn-dl-mp3'),
-    // Progress
-    progBar:     $('#prog-bar'),
-    progStatus:  $('#prog-status'),
-    progDetail:  $('#prog-detail'),
-    // Chunks
-    chunkWrap:   $('#chunk-wrap'),
-    chunkList:   $('#chunk-list'),
-    chunkSum:    $('#chunk-summary'),
-    // Player
-    player:      $('#player'),
-    btnPP:       $('#btn-pp'),
-    plTitle:     $('#pl-title'),
-    plDur:       $('#pl-dur'),
-    plSeek:      $('#pl-seek'),
-    plTime:      $('#pl-time'),
-    // Audio
-    audio:       $('#audio'),
-    audioRef:    $('#audio-ref'),
+// ── DOM ELEMENTS MAP ──
+const DOM = {
+    // Header & Status
+    statusDot:        $('#system-status .status-dot'),
+    statusLabel:      $('#system-status .status-lbl'),
+
+    // Workspace & Editor
+    editor:           $('#script-textarea'),
+    gutter:           $('#gutter'),
+    chunkCounter:     $('#chunk-counter'),
+    wordCounter:      $('#word-counter'),
+    btnSaveScript:    $('#btn-save-script'),
+    tagButtons:       $$('.tag-insert'),
+
+    // Voice Preset
+    selectVoice:      $('#select-voice'),
+    sliderSpeed:      $('#slider-speed'),
+    lblSpeed:         $('#lbl-speed'),
+
+    // Reference Voice Profile
+    selectRef:        $('#select-ref'),
+    btnRefPlay:       $('#btn-ref-play'),
+    txtRefTranscript: $('#txt-ref-transcript'),
+    dropZone:         $('#drop-zone'),
+    inputFileUpload:  $('#input-file-upload'),
+
+    // Emotion Custom Presets
+    selectEmotion:    $('#select-emotion-preset'),
+    txtEmotion:       $('#txt-emotion-instructions'),
+
+    // Audio Engineering Pipeline Toggles
+    numSilence:       $('#num-silence-padding'),
+    checkNormalize:   $('#check-normalize'),
+    checkExportMp3:   $('#check-export-mp3'),
+
+    // Action Panel Buttons
+    btnActionGenerate: $('#btn-action-generate'),
+    btnActionStop:     $('#btn-action-stop'),
+    btnActionClear:    $('#btn-action-clear'),
+    btnDownloadWav:    $('#btn-download-wav'),
+    btnDownloadMp3:    $('#btn-download-mp3'),
+
+    // Generation Progress Status
+    statusOverlay:    $('#status-overlay'),
+    progressBarFill:  $('#progress-bar-fill'),
+    statusMsg:        $('#status-msg'),
+    statusStats:      $('#status-stats'),
+
+    // Segment List Display
+    chunkSuite:       $('#chunk-suite'),
+    chunkRowsContainer: $('#chunk-rows-container'),
+    chunkStatsSummary: $('#chunk-stats-summary'),
+
+    // Integrated Playback Bar
+    audioPlaybackPlayer: $('#audio-playback-player'),
+    btnPlaybackToggle:   $('#btn-playback-toggle'),
+    playbackTitle:       $('#playback-title'),
+    playbackDuration:    $('#playback-duration'),
+    playbackRangeInput:  $('#playback-range-input'),
+    playbackTime:        $('#playback-time'),
+
+    // Audio Output Nodes
+    audioMainNode:    $('#audio-main-node'),
+    audioRefNode:     $('#audio-ref-node'),
 };
 
-let playingChunk = null;
-let sse = null;
+let activePlayingChunk = null;
+let sseSource = null;
 
-// ── Init ────────────────────────────────────────────────────
+// Default reference transcripts map
+const REF_TRANSCRIPTS = {
+    "ref_voice_male.wav": "The day Paul Reston shook my hand and called me the most talented analyst he'd ever worked with, I believed him.",
+    "ref_voice_female.wav": "I came to Hargrove & Associates three years out of Northwestern with a finance degree, a minor in statistics, and the kind of focus that made my college roommates call me \"the monk.\""
+};
 
+// ── INITIALIZATION ──
 document.addEventListener('DOMContentLoaded', async () => {
     await loadConfig();
     await loadVoices();
     await loadRefs();
     await loadScript();
     await loadChunks();
-    setupEditor();
-    setupEvents();
+    setupGutterSync();
+    setupEventListeners();
     connectSSE();
 });
 
-// ── API ─────────────────────────────────────────────────────
-
-async function api(url, opts = {}) {
-    try { const r = await fetch(url, opts); return await r.json(); }
-    catch (e) { console.error('API:', e); return null; }
-}
-function post(url, data) {
-    return api(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
-}
-function del(url) {
-    return api(url, { method: 'DELETE' });
-}
-
-// ── Config ──────────────────────────────────────────────────
-
-async function loadConfig() {
-    const c = await api('/api/config');
-    if (!c) return;
-    D.rngSpeed.value = c.speed;
-    D.speedVal.textContent = c.speed + '×';
-    D.inpEmotion.value = c.emotion || '';
-    D.inpSilence.value = c.silence_padding;
-    D.chkNorm.checked = c.normalize_audio;
-    D.chkMp3.checked = c.export_mp3;
-    D.inpRefText.value = c.ref_text || '';
-
-    // Try to select matching emotion preset
-    selectEmotionPreset(c.emotion);
-}
-
-function selectEmotionPreset(text) {
-    if (!text) { D.selEmotion.value = ''; return; }
-    const opts = D.selEmotion.options;
-    for (let i = 0; i < opts.length; i++) {
-        if (opts[i].value === text) { D.selEmotion.value = text; return; }
+// ── API UTILITIES ──
+async function apiFetch(url, options = {}) {
+    try {
+        const response = await fetch(url, options);
+        return await response.json();
+    } catch (err) {
+        console.error('API Fetch Error:', err);
+        return null;
     }
-    D.selEmotion.value = '';
+}
+
+function apiPost(url, payload) {
+    return apiFetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+    });
+}
+
+function apiDelete(url) {
+    return apiFetch(url, { method: 'DELETE' });
+}
+
+// ── CONFIGURATION & SETTINGS ──
+async function loadConfig() {
+    const config = await apiFetch('/api/config');
+    if (!config) return;
+
+    DOM.sliderSpeed.value = config.speed;
+    DOM.lblSpeed.textContent = config.speed + 'x';
+    DOM.txtEmotion.value = config.emotion || '';
+    DOM.numSilence.value = config.silence_padding;
+    DOM.checkNormalize.checked = config.normalize_audio;
+    DOM.checkExportMp3.checked = config.export_mp3;
+    DOM.txtRefTranscript.value = config.ref_text || '';
+
+    syncEmotionDropdown(config.emotion);
+}
+
+function syncEmotionDropdown(text) {
+    if (!text) {
+        DOM.selectEmotion.value = '';
+        return;
+    }
+    const options = DOM.selectEmotion.options;
+    for (let i = 0; i < options.length; i++) {
+        if (options[i].value === text) {
+            DOM.selectEmotion.value = text;
+            return;
+        }
+    }
+    DOM.selectEmotion.value = '';
 }
 
 async function loadVoices() {
-    const data = await api('/api/voices');
-    const cfg = await api('/api/config');
-    if (!data) return;
-    D.selVoice.innerHTML = '';
-    data.voices.forEach(v => {
-        const o = document.createElement('option');
-        o.value = v;
-        o.textContent = v.charAt(0).toUpperCase() + v.slice(1);
-        if (cfg && v === cfg.voice) o.selected = true;
-        D.selVoice.appendChild(o);
+    const voicesData = await apiFetch('/api/voices');
+    const config = await apiFetch('/api/config');
+    if (!voicesData) return;
+
+    DOM.selectVoice.innerHTML = '';
+    voicesData.voices.forEach(voice => {
+        const opt = document.createElement('option');
+        opt.value = voice;
+        opt.textContent = voice.charAt(0).toUpperCase() + voice.slice(1);
+        if (config && voice === config.voice) opt.selected = true;
+        DOM.selectVoice.appendChild(opt);
     });
 }
 
 async function loadRefs() {
-    const data = await api('/api/refs');
-    if (!data) return;
-    D.selRef.innerHTML = '';
-    data.refs.forEach(r => {
-        const o = document.createElement('option');
-        o.value = r.path;
-        o.textContent = `${r.name}  (${r.duration})`;
-        if (r.active) o.selected = true;
-        D.selRef.appendChild(o);
+    const refsData = await apiFetch('/api/refs');
+    if (!refsData) return;
+
+    DOM.selectRef.innerHTML = '';
+    refsData.refs.forEach(ref => {
+        const opt = document.createElement('option');
+        opt.value = ref.path;
+        opt.textContent = `${ref.name} (${ref.duration})`;
+        if (ref.active) opt.selected = true;
+        DOM.selectRef.appendChild(opt);
+    });
+
+    // Autofill transcript field if it's empty
+    const currentRef = refsData.refs.find(r => r.active);
+    if (currentRef && !DOM.txtRefTranscript.value.trim()) {
+        const defaultText = REF_TRANSCRIPTS[currentRef.name];
+        if (defaultText) DOM.txtRefTranscript.value = defaultText;
+    }
+}
+
+function triggerSaveConfig() {
+    apiPost('/api/config', {
+        voice: DOM.selectVoice.value,
+        speed: parseFloat(DOM.sliderSpeed.value),
+        emotion: DOM.txtEmotion.value,
+        ref_audio: DOM.selectRef.value,
+        ref_text: DOM.txtRefTranscript.value,
+        silence_padding: parseFloat(DOM.numSilence.value),
+        normalize_audio: DOM.checkNormalize.checked,
+        export_mp3: DOM.checkExportMp3.checked,
     });
 }
 
-function saveConfig() {
-    post('/api/config', {
-        voice: D.selVoice.value,
-        speed: parseFloat(D.rngSpeed.value),
-        emotion: D.inpEmotion.value,
-        ref_audio: D.selRef.value,
-        ref_text: D.inpRefText.value,
-        silence_padding: parseFloat(D.inpSilence.value),
-        normalize_audio: D.chkNorm.checked,
-        export_mp3: D.chkMp3.checked,
-    });
-}
-
-// ── Script ──────────────────────────────────────────────────
-
+// ── SCRIPT EDITOR WIDGET ──
 async function loadScript() {
-    const d = await api('/api/script');
-    if (d) { D.editor.value = d.text || ''; updateLines(); updateStats(); }
+    const data = await apiFetch('/api/script');
+    if (data) {
+        DOM.editor.value = data.text || '';
+        updateGutter();
+        updateMetadataStats();
+    }
 }
 
-async function saveScript() {
-    const d = await post('/api/script', { text: D.editor.value });
-    if (d && d.ok) { toast('Saved', 'ok'); updateStats(); }
+async function saveScriptData() {
+    const data = await apiPost('/api/script', { text: DOM.editor.value });
+    if (data && data.ok) {
+        showToast('Script saved successfully', 'ok');
+        updateMetadataStats();
+    } else {
+        showToast('Error saving script', 'err');
+    }
 }
 
-// ── Editor ──────────────────────────────────────────────────
-
-function setupEditor() {
-    updateLines();
-    D.editor.addEventListener('input', () => { updateLines(); updateStats(); });
-    D.editor.addEventListener('scroll', () => { D.lines.scrollTop = D.editor.scrollTop; });
-}
-
-function updateLines() {
-    const ls = D.editor.value.split('\n');
-    let h = '';
-    for (let i = 0; i < ls.length; i++)
-        h += `<div style="opacity:${ls[i].trim() ? 1 : .3}">${i + 1}</div>`;
-    D.lines.innerHTML = h;
-}
-
-function updateStats() {
-    const ls = D.editor.value.split('\n').filter(l => l.trim());
-    const wc = ls.reduce((a, l) => a + l.trim().split(/\s+/).length, 0);
-    const est = Math.ceil(wc / 150); // ~150 words/min narration
-    D.stats.textContent = `${ls.length} chunks · ${wc} words · ~${est} min`;
-}
-
-// ── Refs ────────────────────────────────────────────────────
-
-function setupUpload() {
-    D.btnBrowse.addEventListener('click', e => { e.preventDefault(); D.inpUpload.click(); });
-    D.uploadArea.addEventListener('click', e => { if (e.target !== D.btnBrowse) D.inpUpload.click(); });
-    D.uploadArea.addEventListener('dragover', e => { e.preventDefault(); D.uploadArea.classList.add('drag'); });
-    D.uploadArea.addEventListener('dragleave', () => D.uploadArea.classList.remove('drag'));
-    D.uploadArea.addEventListener('drop', e => {
-        e.preventDefault(); D.uploadArea.classList.remove('drag');
-        if (e.dataTransfer.files[0]) uploadRef(e.dataTransfer.files[0]);
+function setupGutterSync() {
+    updateGutter();
+    DOM.editor.addEventListener('input', () => {
+        updateGutter();
+        updateMetadataStats();
     });
-    D.inpUpload.addEventListener('change', () => { if (D.inpUpload.files[0]) uploadRef(D.inpUpload.files[0]); });
-    D.btnPlayRef.addEventListener('click', () => {
-        if (D.selRef.value) {
-            const name = D.selRef.selectedOptions[0]?.textContent.split('  ')[0];
-            D.audioRef.src = `/api/audio/ref/${name}`;
-            D.audioRef.play();
+    DOM.editor.addEventListener('scroll', () => {
+        DOM.gutter.scrollTop = DOM.editor.scrollTop;
+    });
+}
+
+function updateGutter() {
+    const lines = DOM.editor.value.split('\n');
+    let gutterHtml = '';
+    for (let i = 0; i < lines.length; i++) {
+        const hasText = lines[i].trim().length > 0;
+        gutterHtml += `<div style="opacity: ${hasText ? 1 : 0.25}">${i + 1}</div>`;
+    }
+    DOM.gutter.innerHTML = gutterHtml;
+}
+
+function updateMetadataStats() {
+    const chunksList = DOM.editor.value.split('\n').filter(line => line.trim().length > 0);
+    let totalWords = 0;
+    chunksList.forEach(line => {
+        const words = line.trim().split(/\s+/).filter(w => w.length > 0);
+        totalWords += words.length;
+    });
+
+    // Estimation: average narration speed is roughly 145-150 words per minute.
+    const estDurationMins = Math.ceil(totalWords / 145);
+    const timeStr = estDurationMins === 1 ? '1 minute' : `${estDurationMins} mins`;
+    
+    DOM.chunkCounter.textContent = `${chunksList.length} Chunks`;
+    DOM.wordCounter.textContent = `${totalWords} words · Est. ${timeStr}`;
+}
+
+// ── REFERENCE CLONING UPLOADS ──
+function setupReferenceVoiceActions() {
+    DOM.btnBrowseTrigger.addEventListener('click', (e) => {
+        e.preventDefault();
+        DOM.inputFileUpload.click();
+    });
+
+    DOM.dropZone.addEventListener('click', (e) => {
+        if (e.target !== DOM.btnBrowseTrigger) {
+            DOM.inputFileUpload.click();
+        }
+    });
+
+    DOM.dropZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        DOM.dropZone.classList.add('dragover');
+    });
+
+    DOM.dropZone.addEventListener('dragleave', () => {
+        DOM.dropZone.classList.remove('dragover');
+    });
+
+    DOM.dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        DOM.dropZone.classList.remove('dragover');
+        if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+            handleFileUpload(e.dataTransfer.files[0]);
+        }
+    });
+
+    DOM.inputFileUpload.addEventListener('change', () => {
+        if (DOM.inputFileUpload.files && DOM.inputFileUpload.files[0]) {
+            handleFileUpload(DOM.inputFileUpload.files[0]);
+        }
+    });
+
+    DOM.btnRefPlay.addEventListener('click', () => {
+        if (DOM.selectRef.value) {
+            const fullTextOption = DOM.selectRef.selectedOptions[0]?.textContent || '';
+            const filename = fullTextOption.split(' (')[0].trim();
+            DOM.audioRefNode.src = `/api/audio/ref/${filename}`;
+            DOM.audioRefNode.play();
+        } else {
+            showToast('No reference voice active', 'err');
         }
     });
 }
 
-async function uploadRef(file) {
+async function handleFileUpload(file) {
     const fd = new FormData();
     fd.append('file', file);
-    fd.append('ref_text', D.inpRefText.value);
-    toast('Uploading…', 'ok');
+    fd.append('ref_text', DOM.txtRefTranscript.value);
+    showToast('Uploading clone audio...', 'ok');
+
     try {
-        const r = await fetch('/api/refs/upload', { method: 'POST', body: fd });
-        const d = await r.json();
-        if (d.ok) { toast(`Uploaded: ${d.name}`, 'ok'); await loadRefs(); }
-        else toast('Upload failed', 'err');
-    } catch { toast('Upload failed', 'err'); }
-}
-
-// ── SSE ─────────────────────────────────────────────────────
-
-function connectSSE() {
-    if (sse) sse.close();
-    sse = new EventSource('/api/generate/progress');
-    sse.addEventListener('progress', e => handleProgress(JSON.parse(e.data)));
-    sse.onopen = () => { D.statusDot.className = 'dot ok'; D.statusLabel.textContent = 'Ready'; };
-    sse.onerror = () => {
-        D.statusDot.className = 'dot err'; D.statusLabel.textContent = 'Disconnected';
-        setTimeout(connectSSE, 3000);
-    };
-}
-
-function handleProgress(d) {
-    const { running, status, message, current_chunk, total_chunks, chunks_done } = d;
-
-    // Status text
-    D.progStatus.textContent = message || statusText(status);
-
-    // Dot
-    if (running) { D.statusDot.className = 'dot'; D.statusLabel.textContent = statusText(status); }
-    else if (status === 'error') { D.statusDot.className = 'dot err'; D.statusLabel.textContent = 'Error'; }
-    else { D.statusDot.className = 'dot ok'; D.statusLabel.textContent = 'Ready'; }
-
-    // Progress bar
-    if (total_chunks > 0) {
-        const pct = Math.round((current_chunk / total_chunks) * 100);
-        D.progBar.style.width = pct + '%';
-        D.progDetail.textContent = `${current_chunk}/${total_chunks} chunks · ${pct}%`;
-        D.progBar.classList.toggle('active', running);
-    } else {
-        D.progBar.style.width = '0%';
-        D.progBar.classList.remove('active');
-        D.progDetail.textContent = '';
-    }
-
-    // Buttons
-    D.btnGen.classList.toggle('hidden', running);
-    D.btnStop.classList.toggle('hidden', !running);
-
-    // Chunk list
-    if (chunks_done && chunks_done.length > 0) {
-        renderChunks(chunks_done, total_chunks);
-    }
-
-    // Done
-    if (status === 'done' && !running) { loadChunks(); }
-}
-
-function statusText(s) {
-    return { idle: 'Ready', loading: 'Loading model…', generating: 'Generating…',
-             stitching: 'Stitching audio…', done: 'Complete', error: 'Error',
-             cancelled: 'Cancelled' }[s] || s;
-}
-
-// ── Chunks ──────────────────────────────────────────────────
-
-async function loadChunks() {
-    const d = await api('/api/chunks');
-    if (!d) return;
-    if (d.chunks.length > 0) {
-        D.chunkWrap.classList.remove('hidden');
-        D.chunkSum.textContent = `${d.chunks.length} chunks`;
-        renderChunkFiles(d.chunks);
-    }
-    if (d.final.exists) {
-        showPlayer(d.final.duration, d.final.mp3_exists);
-    } else {
-        D.btnDlWav.classList.add('hidden');
-        D.btnDlMp3.classList.add('hidden');
-    }
-}
-
-function renderChunks(chunks, total) {
-    D.chunkWrap.classList.remove('hidden');
-    D.chunkSum.textContent = `${chunks.length}/${total}`;
-    D.chunkList.innerHTML = '';
-    chunks.forEach((c, i) => {
-        const row = document.createElement('div');
-        row.className = `chunk-row ${c.error ? 'err' : ''}`;
-        const icon = c.error ? '✗' : (c.skipped ? '⏭' : '✓');
-        const dur = c.duration || '';
-        const tm = c.time ? c.time : '';
-        row.innerHTML = `
-            <span class="chunk-idx">${i + 1}</span>
-            <span class="chunk-icon" title="Play">${c.error ? '✗' : '▶'}</span>
-            <span class="chunk-text">${c.file.replace('.wav', '')}</span>
-            <span class="chunk-dur">${dur}</span>
-            <span class="chunk-time">${tm}</span>
-            <button class="chunk-del" title="Delete">✕</button>
-        `;
-        if (!c.error) {
-            row.querySelector('.chunk-icon').onclick = () => playChunk(c.file, row);
+        const response = await fetch('/api/refs/upload', {
+            method: 'POST',
+            body: fd,
+        });
+        const data = await response.json();
+        if (data.ok) {
+            showToast(`Voice uploaded: ${data.name}`, 'ok');
+            await loadRefs();
+            triggerSaveConfig();
+        } else {
+            showToast('Upload failed: ' + (data.error || 'unknown'), 'err');
         }
-        row.querySelector('.chunk-del').onclick = (e) => { e.stopPropagation(); deleteChunk(c.file); };
-        D.chunkList.appendChild(row);
-    });
+    } catch (err) {
+        showToast('Upload failed due to connection error', 'err');
+    }
 }
 
-function renderChunkFiles(chunks) {
-    D.chunkList.innerHTML = '';
-    chunks.forEach((c, i) => {
-        const row = document.createElement('div');
-        row.className = 'chunk-row';
-        row.innerHTML = `
-            <span class="chunk-idx">${i + 1}</span>
-            <span class="chunk-icon" title="Play">▶</span>
-            <span class="chunk-text">${c.name.replace('.wav', '')}</span>
-            <span class="chunk-dur">${c.duration}</span>
-            <span class="chunk-time"></span>
-            <button class="chunk-del" title="Delete">✕</button>
-        `;
-        row.querySelector('.chunk-icon').onclick = () => playChunk(c.name, row);
-        row.querySelector('.chunk-del').onclick = (e) => { e.stopPropagation(); deleteChunk(c.name); };
-        D.chunkList.appendChild(row);
-    });
-}
+// ── SSE ENGINE PROGRESS LISTENER ──
+function connectSSE() {
+    if (sseSource) sseSource.close();
 
-function playChunk(file, row) {
-    $$('.chunk-row.playing').forEach(r => r.classList.remove('playing'));
-    D.audio.src = `/api/audio/chunk/${file}`;
-    D.audio.play();
-    if (row) row.classList.add('playing');
-    playingChunk = file;
-    D.player.classList.remove('hidden');
-    D.plTitle.textContent = file.replace('.wav', '');
-    D.btnPP.textContent = '⏸';
-    D.audio.onended = () => {
-        if (row) row.classList.remove('playing');
-        playingChunk = null;
-        D.btnPP.textContent = '▶';
+    sseSource = new EventSource('/api/generate/progress');
+
+    sseSource.addEventListener('progress', (e) => {
+        const progress = JSON.parse(e.data);
+        updateProgressUI(progress);
+    });
+
+    sseSource.onopen = () => {
+        DOM.statusDot.className = 'status-dot ok';
+        DOM.statusLabel.textContent = 'Ready';
+    };
+
+    sseSource.onerror = () => {
+        DOM.statusDot.className = 'status-dot err';
+        DOM.statusLabel.textContent = 'Disconnected';
+        setTimeout(connectSSE, 4000);
     };
 }
 
-async function deleteChunk(file) {
-    const d = await del(`/api/chunks/${file}`);
-    if (d && d.ok) {
-        toast('Deleted ' + file, 'ok');
+function updateProgressUI(data) {
+    const { running, status, message, current_chunk, total_chunks, chunks_done } = data;
+
+    // Set high-end descriptive messages
+    let descriptiveMsg = message;
+    if (status === 'loading') descriptiveMsg = "⚡ Booting Qwen3-TTS Engine & loading model weights...";
+    else if (status === 'stitching') descriptiveMsg = "🎛️ Merging acoustic segment outputs...";
+    else if (status === 'done') descriptiveMsg = "✅ Narration compilation completed successfully!";
+    else if (status === 'error') descriptiveMsg = "⚠️ Generation pipeline halted due to an error.";
+    else if (status === 'cancelled') descriptiveMsg = "🛑 Generation pipeline aborted by request.";
+    
+    DOM.statusMsg.textContent = descriptiveMsg || statusLabelText(status);
+
+    // Header Status Updates
+    if (running) {
+        DOM.statusDot.className = 'status-dot';
+        DOM.statusLabel.textContent = 'Processing Pipeline...';
+    } else if (status === 'error') {
+        DOM.statusDot.className = 'status-dot err';
+        DOM.statusLabel.textContent = 'Pipeline Failure';
+    } else {
+        DOM.statusDot.className = 'status-dot ok';
+        DOM.statusLabel.textContent = 'Connected';
+    }
+
+    // Modern Progress Visualizer Bar
+    if (total_chunks > 0) {
+        const percentage = Math.round((current_chunk / total_chunks) * 100);
+        DOM.progressBarFill.style.width = `${percentage}%`;
+        DOM.statusStats.textContent = `Completed Chunks: ${current_chunk} / ${total_chunks} (${percentage}%)`;
+        DOM.progressBarFill.classList.toggle('active', running);
+    } else {
+        DOM.progressBarFill.style.width = '0%';
+        DOM.progressBarFill.classList.remove('active');
+        DOM.statusStats.textContent = '';
+    }
+
+    // Toggle Action Buttons
+    DOM.btnActionGenerate.classList.toggle('hidden', running);
+    DOM.btnActionStop.classList.toggle('hidden', !running);
+
+    // List out completed segments in a detailed list view
+    if (chunks_done && chunks_done.length > 0) {
+        renderSegmentRows(chunks_done, total_chunks);
+    }
+}
+
+function statusLabelText(status) {
+    const statuses = {
+        idle: 'System Standby',
+        loading: 'Model Initialization...',
+        generating: 'Generating acoustic segments...',
+        stitching: 'Processing post-engineering normalization...',
+        done: 'Generation Completed',
+        error: 'Pipeline Failure',
+        cancelled: 'Aborted',
+    };
+    return statuses[status] || status;
+}
+
+// ── COMPILATION LIST DISPLAY & PLAYBACK ──
+async function loadChunks() {
+    const data = await apiFetch('/api/chunks');
+    if (!data) return;
+
+    if (data.chunks.length > 0) {
+        DOM.chunkSuite.classList.remove('hidden');
+        DOM.chunkStatsSummary.textContent = `Total: ${data.chunks.length} segments ready`;
+        renderStaticSegmentRows(data.chunks);
+    } else {
+        DOM.chunkSuite.classList.add('hidden');
+    }
+
+    if (data.final.exists) {
+        displayAudioPlayer(data.final.duration, data.final.mp3_exists);
+    } else {
+        DOM.btnDownloadWav.classList.add('hidden');
+        DOM.btnDownloadMp3.classList.add('hidden');
+        DOM.audioPlaybackPlayer.classList.add('hidden');
+    }
+}
+
+function renderSegmentRows(chunks, total) {
+    DOM.chunkSuite.classList.remove('hidden');
+    DOM.chunkStatsSummary.textContent = `${chunks.length} of ${total} finished`;
+    DOM.chunkRowsContainer.innerHTML = '';
+
+    chunks.forEach((chunk, index) => {
+        const row = document.createElement('div');
+        row.className = `chunk-row-item ${chunk.error ? 'failure' : ''}`;
+        
+        const hasFinished = !chunk.error;
+        const iconSymbol = chunk.error ? '✗' : (chunk.skipped ? '⏭' : '▶');
+        const durationDisplay = chunk.duration || '—';
+        const elapsedText = chunk.time ? ` (+${chunk.time})` : '';
+
+        row.innerHTML = `
+            <span class="chunk-row-idx">${String(index + 1).padStart(2, '0')}</span>
+            <span class="chunk-row-icon">${iconSymbol}</span>
+            <span class="chunk-row-text">${chunk.file.replace('.wav', '')}</span>
+            <span class="chunk-row-dur">${durationDisplay}</span>
+            <span class="chunk-row-elapsed">${elapsedText}</span>
+            <button class="chunk-row-del-btn" title="Remove Segment">✕</button>
+        `;
+
+        if (hasFinished) {
+            row.querySelector('.chunk-row-icon').addEventListener('click', () => {
+                triggerSegmentPlayback(chunk.file, row);
+            });
+        }
+
+        row.querySelector('.chunk-row-del-btn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            removeSegmentFile(chunk.file);
+        });
+
+        DOM.chunkRowsContainer.appendChild(row);
+    });
+}
+
+function renderStaticSegmentRows(chunks) {
+    DOM.chunkRowsContainer.innerHTML = '';
+    chunks.forEach((chunk, index) => {
+        const row = document.createElement('div');
+        row.className = 'chunk-row-item';
+        
+        row.innerHTML = `
+            <span class="chunk-row-idx">${String(index + 1).padStart(2, '0')}</span>
+            <span class="chunk-row-icon">▶</span>
+            <span class="chunk-row-text">${chunk.name.replace('.wav', '')}</span>
+            <span class="chunk-row-dur">${chunk.duration}</span>
+            <span class="chunk-row-elapsed"></span>
+            <button class="chunk-row-del-btn" title="Remove Segment">✕</button>
+        `;
+
+        row.querySelector('.chunk-row-icon').addEventListener('click', () => {
+            triggerSegmentPlayback(chunk.name, row);
+        });
+
+        row.querySelector('.chunk-row-del-btn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            removeSegmentFile(chunk.name);
+        });
+
+        DOM.chunkRowsContainer.appendChild(row);
+    });
+}
+
+function triggerSegmentPlayback(filename, rowElement) {
+    $$('.chunk-row-item.playing').forEach(item => item.classList.remove('playing'));
+    
+    DOM.audioMainNode.src = `/api/audio/chunk/${filename}`;
+    DOM.audioMainNode.play();
+    
+    if (rowElement) rowElement.classList.add('playing');
+    activePlayingChunk = filename;
+    
+    DOM.audioPlaybackPlayer.classList.remove('hidden');
+    DOM.playbackTitle.textContent = `Playing: ${filename.replace('.wav', '')}`;
+    DOM.btnPlaybackToggle.textContent = '⏸';
+
+    DOM.audioMainNode.onended = () => {
+        if (rowElement) rowElement.classList.remove('playing');
+        activePlayingChunk = null;
+        DOM.btnPlaybackToggle.textContent = '▶';
+        DOM.playbackTitle.textContent = "Full Output";
+    };
+}
+
+async function removeSegmentFile(filename) {
+    const data = await apiDelete(`/api/chunks/${filename}`);
+    if (data && data.ok) {
+        showToast('Segment removed', 'ok');
         await loadChunks();
     } else {
-        toast('Delete failed', 'err');
+        showToast('Error removing segment file', 'err');
     }
 }
 
-// ── Player ──────────────────────────────────────────────────
-
-function showPlayer(dur, hasMp3) {
-    D.player.classList.remove('hidden');
-    D.plDur.textContent = dur || '';
-    D.plTitle.textContent = 'Final Output';
-    D.btnDlWav.classList.remove('hidden');
-    D.btnDlMp3.classList.toggle('hidden', !hasMp3);
+// ── INTEGRATED PLAYBACK SUITE ──
+function displayAudioPlayer(totalDuration, mp3Exists) {
+    DOM.audioPlaybackPlayer.classList.remove('hidden');
+    DOM.playbackDuration.textContent = totalDuration || '';
+    DOM.playbackTitle.textContent = 'Full Output Narration';
+    
+    DOM.btnDownloadWav.classList.remove('hidden');
+    DOM.btnDownloadMp3.classList.toggle('hidden', !mp3Exists);
 }
 
-function setupPlayer() {
-    D.btnPP.addEventListener('click', () => {
-        if (!D.audio.src || !playingChunk) {
-            D.audio.src = '/api/audio/final';
-            D.plTitle.textContent = 'Final Output';
+function setupAudioPlaybackControls() {
+    DOM.btnPlaybackToggle.addEventListener('click', () => {
+        if (!DOM.audioMainNode.src || !activePlayingChunk) {
+            DOM.audioMainNode.src = '/api/audio/final';
+            DOM.playbackTitle.textContent = 'Full Output Narration';
         }
-        if (D.audio.paused) { D.audio.play(); D.btnPP.textContent = '⏸'; }
-        else { D.audio.pause(); D.btnPP.textContent = '▶'; }
+        
+        if (DOM.audioMainNode.paused) {
+            DOM.audioMainNode.play();
+            DOM.btnPlaybackToggle.textContent = '⏸';
+        } else {
+            DOM.audioMainNode.pause();
+            DOM.btnPlaybackToggle.textContent = '▶';
+        }
     });
-    D.audio.addEventListener('timeupdate', () => {
-        if (!D.audio.duration) return;
-        D.plSeek.value = (D.audio.currentTime / D.audio.duration) * 100;
-        D.plTime.textContent = `${fmt(D.audio.currentTime)} / ${fmt(D.audio.duration)}`;
+
+    DOM.audioMainNode.addEventListener('timeupdate', () => {
+        if (!DOM.audioMainNode.duration) return;
+        const progressPct = (DOM.audioMainNode.currentTime / DOM.audioMainNode.duration) * 100;
+        DOM.playbackRangeInput.value = progressPct;
+        DOM.playbackTime.textContent = `${formatTimelineLabel(DOM.audioMainNode.currentTime)} / ${formatTimelineLabel(DOM.audioMainNode.duration)}`;
     });
-    D.audio.addEventListener('ended', () => {
-        D.btnPP.textContent = '▶'; playingChunk = null;
-        $$('.chunk-row.playing').forEach(r => r.classList.remove('playing'));
+
+    DOM.audioMainNode.addEventListener('ended', () => {
+        DOM.btnPlaybackToggle.textContent = '▶';
+        activePlayingChunk = null;
+        $$('.chunk-row-item.playing').forEach(item => item.classList.remove('playing'));
     });
-    D.audio.addEventListener('play', () => { D.btnPP.textContent = '⏸'; D.player.classList.remove('hidden'); });
-    D.plSeek.addEventListener('input', () => {
-        if (D.audio.duration) D.audio.currentTime = (D.plSeek.value / 100) * D.audio.duration;
+
+    DOM.audioMainNode.addEventListener('play', () => {
+        DOM.btnPlaybackToggle.textContent = '⏸';
+        DOM.audioPlaybackPlayer.classList.remove('hidden');
+    });
+
+    DOM.playbackRangeInput.addEventListener('input', () => {
+        if (DOM.audioMainNode.duration) {
+            DOM.audioMainNode.currentTime = (DOM.playbackRangeInput.value / 100) * DOM.audioMainNode.duration;
+        }
     });
 }
 
-function fmt(s) { return Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0'); }
-
-// ── Generate ────────────────────────────────────────────────
-
-async function startGen() {
-    await saveScript();
-    saveConfig();
-    const d = await post('/api/generate', { mode: 'batch' });
-    if (d && !d.ok) toast(d.error || 'Failed', 'err');
+function formatTimelineLabel(seconds) {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
 }
 
-async function stopGen() {
-    await post('/api/generate/stop', {});
-    toast('Cancelling…', 'err');
-}
-
-async function clearAll() {
-    if (!confirm('Delete ALL generated chunks and outputs?')) return;
-    const d = await post('/api/clear', {});
-    if (d && d.ok) {
-        D.chunkWrap.classList.add('hidden');
-        D.chunkList.innerHTML = '';
-        D.player.classList.add('hidden');
-        D.btnDlWav.classList.add('hidden');
-        D.btnDlMp3.classList.add('hidden');
-        D.progBar.style.width = '0%';
-        D.progDetail.textContent = '';
-        D.progStatus.textContent = 'Ready';
-        toast('All cleared', 'ok');
+// ── GENERATION TRIGGERS ──
+async function triggerAudioGeneration() {
+    await saveScriptData();
+    triggerSaveConfig();
+    const data = await apiPost('/api/generate', { mode: 'batch' });
+    if (data && !data.ok) {
+        showToast(data.error || 'Failed to initialize pipeline', 'err');
     }
 }
 
-// ── Toast ───────────────────────────────────────────────────
-
-function toast(msg, type = '') {
-    const el = document.createElement('div');
-    el.className = `toast ${type}`;
-    el.textContent = msg;
-    document.body.appendChild(el);
-    setTimeout(() => el.remove(), 3000);
+async function abortGeneration() {
+    await apiPost('/api/generate/stop', {});
+    showToast('Aborting pipeline...', 'err');
 }
 
-// ── Events ──────────────────────────────────────────────────
+async function purgeProjectOutputs() {
+    if (!confirm('Are you sure you want to delete ALL generated clips and final narratives? This cannot be undone.')) {
+        return;
+    }
+    const data = await apiPost('/api/clear', {});
+    if (data && data.ok) {
+        DOM.chunkSuite.classList.add('hidden');
+        DOM.chunkRowsContainer.innerHTML = '';
+        DOM.audioPlaybackPlayer.classList.add('hidden');
+        DOM.btnDownloadWav.classList.add('hidden');
+        DOM.btnDownloadMp3.classList.add('hidden');
+        DOM.progressBarFill.style.width = '0%';
+        DOM.statusStats.textContent = '';
+        DOM.statusMsg.textContent = 'System Standby';
+        showToast('Project cleared successfully', 'ok');
+    }
+}
 
-function setupEvents() {
-    // Save
-    D.btnSave.addEventListener('click', saveScript);
-    document.addEventListener('keydown', e => {
-        if ((e.metaKey || e.ctrlKey) && e.key === 's') { e.preventDefault(); saveScript(); }
+// ── TOAST NOTIFICATIONS ──
+function showToast(message, type = '') {
+    const box = document.createElement('div');
+    box.className = `toast-msg-box ${type}`;
+    box.textContent = message;
+    document.body.appendChild(box);
+    setTimeout(() => box.remove(), 3200);
+}
+
+// ── EVENT ROUTERS & EVENT LISTENER MAPS ──
+function setupEventListeners() {
+    // Save hotkey trigger
+    DOM.btnSaveScript.addEventListener('click', saveScriptData);
+    document.addEventListener('keydown', (e) => {
+        if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+            e.preventDefault();
+            saveScriptData();
+        }
     });
 
-    // Config auto-save
-    D.selVoice.addEventListener('change', saveConfig);
-    D.rngSpeed.addEventListener('input', () => { D.speedVal.textContent = D.rngSpeed.value + '×'; saveConfig(); });
-    D.inpSilence.addEventListener('change', saveConfig);
-    D.chkNorm.addEventListener('change', saveConfig);
-    D.chkMp3.addEventListener('change', saveConfig);
-    D.inpRefText.addEventListener('change', saveConfig);
+    // Auto config save routers
+    DOM.selectVoice.addEventListener('change', triggerSaveConfig);
+    DOM.sliderSpeed.addEventListener('input', () => {
+        DOM.lblSpeed.textContent = DOM.sliderSpeed.value + 'x';
+        triggerSaveConfig();
+    });
+    DOM.numSilence.addEventListener('change', triggerSaveConfig);
+    DOM.checkNormalize.addEventListener('change', triggerSaveConfig);
+    DOM.checkExportMp3.addEventListener('change', triggerSaveConfig);
+    DOM.txtRefTranscript.addEventListener('change', triggerSaveConfig);
 
-    // Ref voice select → activate
-    D.selRef.addEventListener('change', () => {
-        post('/api/refs/activate', { path: D.selRef.value, ref_text: D.inpRefText.value });
+    // Reference Profile change
+    DOM.selectRef.addEventListener('change', () => {
+        const fullTextOption = DOM.selectRef.selectedOptions[0]?.textContent || '';
+        const filename = fullTextOption.split(' (')[0].trim();
+        const path = DOM.selectRef.value;
+        
+        // Sync transcript input
+        const defaultTranscript = REF_TRANSCRIPTS[filename];
+        if (defaultTranscript) {
+            DOM.txtRefTranscript.value = defaultTranscript;
+        }
+
+        apiPost('/api/refs/activate', {
+            path: path,
+            ref_text: DOM.txtRefTranscript.value
+        });
     });
 
-    // Emotion preset → fill textarea
-    D.selEmotion.addEventListener('change', () => {
-        const v = D.selEmotion.value;
-        if (v) D.inpEmotion.value = v;
-        saveConfig();
+    // Emotion Preset mapping
+    DOM.selectEmotion.addEventListener('change', () => {
+        const val = DOM.selectEmotion.value;
+        if (val) DOM.txtEmotion.value = val;
+        triggerSaveConfig();
     });
-    D.inpEmotion.addEventListener('change', saveConfig);
+    DOM.txtEmotion.addEventListener('change', triggerSaveConfig);
 
-    // Generate
-    D.btnGen.addEventListener('click', startGen);
-    D.btnStop.addEventListener('click', stopGen);
-    D.btnClear.addEventListener('click', clearAll);
+    // Hot insert tags helpers
+    DOM.tagButtons.forEach(btn => {
+        btn.addEventListener('click', () => {
+            const tag = btn.getAttribute('data-tag');
+            const pos = DOM.editor.selectionStart;
+            const text = DOM.editor.value;
+            DOM.editor.value = text.slice(0, pos) + tag + ' ' + text.slice(pos);
+            DOM.editor.focus();
+            DOM.editor.setSelectionRange(pos + tag.length + 1, pos + tag.length + 1);
+            updateGutter();
+            updateMetadataStats();
+        });
+    });
 
-    // Downloads
-    D.btnDlWav.addEventListener('click', () => window.open('/api/download/wav', '_blank'));
-    D.btnDlMp3.addEventListener('click', () => window.open('/api/download/mp3', '_blank'));
+    // Main action routers
+    DOM.btnActionGenerate.addEventListener('click', triggerAudioGeneration);
+    DOM.btnActionStop.addEventListener('click', abortGeneration);
+    DOM.btnActionClear.addEventListener('click', purgeProjectOutputs);
 
-    // Player
-    setupPlayer();
+    // Download handlers
+    DOM.btnDownloadWav.addEventListener('click', () => {
+        window.open('/api/download/wav', '_blank');
+    });
+    DOM.btnDownloadMp3.addEventListener('click', () => {
+        window.open('/api/download/mp3', '_blank');
+    });
 
-    // Upload
-    setupUpload();
+    // Audio Playbacks setup
+    setupAudioPlaybackControls();
+    
+    // File upload zones setup
+    setupReferenceVoiceActions();
 }
