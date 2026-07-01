@@ -2,7 +2,7 @@
 // app.js — Narrator Dashboard Logic (v3 Premium Edition)
 // ============================================================
 
-const $ = (s) => document.querySelector(s);
+const $ = (s) => document.querySelector(s) || document.createElement('div');
 const $$ = (s) => document.querySelectorAll(s);
 
 // ── DOM ELEMENTS MAP ──
@@ -420,6 +420,8 @@ function updateProgressUI(data) {
         descriptiveMsg = _pipelineMode === 'audio'
             ? "✅ Audio generation complete."
             : "✅ Narration complete — starting B-Roll video…";
+        // Reload segment rows and reveal master player
+        loadChunks();
         // Auto-kick the video pipeline right after audio finishes
         setTimeout(autoStartVideoAfterAudio, 800);
     }

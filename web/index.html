@@ -66,30 +66,7 @@
                     <div class="control-group">
                         <label class="label-with-value">Speed <span id="lbl-speed">1.0x</span></label>
                         <input type="range" id="slider-speed" min="0.5" max="2.0" step="0.1" value="1.0">
-                    </div>
-                </div>
-
-                <!-- Card: Reference voice -->
-                <div class="sidebar-card" id="card-voice-cloning">
-                    <div class="card-headline">Voice Cloning / Profile Reference</div>
-                    <div class="control-group">
-                        <label for="select-ref">Reference Profile</label>
-                        <div class="select-row">
-                            <select id="select-ref"></select>
-                            <button class="btn btn-icon" id="btn-ref-play" title="Preview Reference Profile">▶</button>
-                        </div>
-                    </div>
-                    <div class="control-group">
-                        <label for="txt-ref-transcript">Reference Audio Transcript</label>
-                        <textarea id="txt-ref-transcript" rows="2" placeholder="Exact spoken words..."></textarea>
-                    </div>
-                    <div class="upload-dropzone" id="drop-zone">
-                        <input type="file" id="input-file-upload" accept=".wav,.mp3,.m4a,.flac" hidden>
-                        <p>Drop WAV here or <span class="link-color" id="btn-browse-trigger">browse</span></p>
-                    </div>
-                </div>
-
-                <!-- Card: Emotion Presets -->
+                    <!-- Card: Emotion Presets -->
                 <div class="sidebar-card" id="card-emotion">
                     <div class="card-headline">Emotional Arc &amp; Directions</div>
                     <div class="control-group">
@@ -208,16 +185,53 @@
 
             <!-- Tag Injector Helper Shelf -->
             <div class="tag-shelf">
-                <span class="shelf-label">Insert Tag:</span>
-                <div class="shelf-tags">
-                    <button class="tag-insert" data-tag="[voice:af_sarah]">Sarah (US-F)</button>
-                    <button class="tag-insert" data-tag="[voice:af_bella]">Bella (US-F)</button>
-                    <button class="tag-insert" data-tag="[voice:am_adam]">Adam (US-M)</button>
-                    <button class="tag-insert" data-tag="[voice:bf_emma]">Emma (UK-F)</button>
-                    <button class="tag-insert" data-tag="[emotion:Quiet Rage]">Quiet Rage</button>
-                    <button class="tag-insert" data-tag="[emotion:Betrayal Discovery]">Betrayal</button>
-                    <button class="tag-insert" data-tag="[emotion:Whispered]">Whisper</button>
-                    <button class="tag-insert" data-tag="[emotion:Cold &amp; Detached]">Detached</button>
+                <div class="tag-group">
+                    <span class="shelf-label">US Female:</span>
+                    <button class="tag-insert" data-tag="[voice:af_sarah]">Sarah</button>
+                    <button class="tag-insert" data-tag="[voice:af_bella]">Bella</button>
+                    <button class="tag-insert" data-tag="[voice:af_heart]">Heart</button>
+                    <button class="tag-insert" data-tag="[voice:af_nicole]">Nicole</button>
+                    <button class="tag-insert" data-tag="[voice:af_sky]">Sky</button>
+                    <button class="tag-insert" data-tag="[voice:af_alloy]">Alloy</button>
+                    <button class="tag-insert" data-tag="[voice:af_aoede]">Aoede</button>
+                    <button class="tag-insert" data-tag="[voice:af_jessica]">Jessica</button>
+                    <button class="tag-insert" data-tag="[voice:af_kore]">Kore</button>
+                    <button class="tag-insert" data-tag="[voice:af_nova]">Nova</button>
+                    <button class="tag-insert" data-tag="[voice:af_river]">River</button>
+                </div>
+                <div class="tag-group">
+                    <span class="shelf-label">US Male:</span>
+                    <button class="tag-insert" data-tag="[voice:am_adam]">Adam</button>
+                    <button class="tag-insert" data-tag="[voice:am_michael]">Michael</button>
+                    <button class="tag-insert" data-tag="[voice:am_fenrir]">Fenrir</button>
+                    <button class="tag-insert" data-tag="[voice:am_puck]">Puck</button>
+                    <button class="tag-insert" data-tag="[voice:am_echo]">Echo</button>
+                    <button class="tag-insert" data-tag="[voice:am_eric]">Eric</button>
+                    <button class="tag-insert" data-tag="[voice:am_liam]">Liam</button>
+                    <button class="tag-insert" data-tag="[voice:am_onyx]">Onyx</button>
+                    <button class="tag-insert" data-tag="[voice:am_santa]">Santa</button>
+                </div>
+                <div class="tag-group">
+                    <span class="shelf-label">UK Voices:</span>
+                    <button class="tag-insert" data-tag="[voice:bf_alice]">Alice (F)</button>
+                    <button class="tag-insert" data-tag="[voice:bf_emma]">Emma (F)</button>
+                    <button class="tag-insert" data-tag="[voice:bf_isabella]">Isabella (F)</button>
+                    <button class="tag-insert" data-tag="[voice:bf_lily]">Lily (F)</button>
+                    <button class="tag-insert" data-tag="[voice:bm_daniel]">Daniel (M)</button>
+                    <button class="tag-insert" data-tag="[voice:bm_fable]">Fable (M)</button>
+                    <button class="tag-insert" data-tag="[voice:bm_george]">George (M)</button>
+                    <button class="tag-insert" data-tag="[voice:bm_lewis]">Lewis (M)</button>
+                </div>
+                <div class="tag-group">
+                    <span class="shelf-label">Emotions:</span>
+                    <button class="tag-insert" data-tag="[emotion:Simmering Anger]">Quiet Anger</button>
+                    <button class="tag-insert" data-tag="[emotion:Cinematic Narrative]">Cinematic</button>
+                    <button class="tag-insert" data-tag="[emotion:Whispered Suspense]">Whisper</button>
+                    <button class="tag-insert" data-tag="[emotion:Cold Precision]">Cold Precision</button>
+                    <button class="tag-insert" data-tag="[emotion:Raw Vulnerability]">Sorrow</button>
+                    <button class="tag-insert" data-tag="[emotion:Urgent Excitement]">Excited</button>
+                    <button class="tag-insert" data-tag="[emotion:Empowered Resolution]">Resolute</button>
+                    <button class="tag-insert" data-tag="[emotion:Bitter Sarcasm]">Sarcastic</button>
                 </div>
             </div>
 
