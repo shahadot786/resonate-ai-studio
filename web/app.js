@@ -21,6 +21,7 @@ const DOM = {
 
     // Voice Preset
     selectVoice:      $('#select-voice'),
+    btnVoicePreview:  $('#btn-voice-preview'),
     sliderSpeed:      $('#slider-speed'),
     lblSpeed:         $('#lbl-speed'),
 
@@ -744,7 +745,29 @@ function setupEventListeners() {
     });
 
     // Auto config save routers
-    DOM.selectVoice.addEventListener('change', triggerSaveConfig);
+    DOM.selectVoice.addEventListener('change', () => {
+        DOM.audioRefNode.pause();
+        DOM.btnVoicePreview.textContent = '▶';
+        triggerSaveConfig();
+    });
+
+    DOM.btnVoicePreview.addEventListener('click', () => {
+        const voice = DOM.selectVoice.value;
+        if (!voice) return;
+        
+        if (!DOM.audioRefNode.paused && DOM.audioRefNode.src.includes(`/api/voices/preview/${voice}`)) {
+            DOM.audioRefNode.pause();
+            DOM.btnVoicePreview.textContent = '▶';
+        } else {
+            DOM.audioRefNode.src = `/api/voices/preview/${voice}`;
+            DOM.audioRefNode.play();
+            DOM.btnVoicePreview.textContent = '⏸';
+            
+            DOM.audioRefNode.onended = () => {
+                DOM.btnVoicePreview.textContent = '▶';
+            };
+        }
+    });
     DOM.sliderSpeed.addEventListener('input', () => {
         DOM.lblSpeed.textContent = DOM.sliderSpeed.value + 'x';
         triggerSaveConfig();

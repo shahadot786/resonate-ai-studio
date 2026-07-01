@@ -148,6 +148,14 @@ async def list_voices():
     return {"voices": config.VOICES}
 
 
+@app.get("/api/voices/preview/{voice_name}")
+async def get_voice_preview(voice_name: str):
+    path = Path("voice_tests") / f"{voice_name}_sample.wav"
+    if path.exists():
+        return FileResponse(path, media_type="audio/wav")
+    return JSONResponse({"error": "Preview not found"}, status_code=404)
+
+
 # ── Routes: Script ───────────────────────────────────────────
 
 
