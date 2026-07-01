@@ -18,6 +18,7 @@ const DOM = {
     wordCounter:      $('#word-counter'),
     btnSaveScript:    $('#btn-save-script'),
     btnAnalyzeScript: $('#btn-analyze-script'),
+    btnPolishScript:  $('#btn-polish-script'),
     tagButtons:       $$('.tag-insert'),
 
     // Voice Preset
@@ -269,14 +270,19 @@ async function loadScript() {
     }
 }
 
-async function saveScriptData() {
+async function saveScriptData(silent = false) {
+    DOM.btnSaveScript.textContent = 'Saving...';
     const data = await apiPost('/api/script', { text: DOM.editor.value });
     if (data && data.ok) {
-        showToast('Script saved successfully', 'ok');
+        DOM.btnSaveScript.textContent = 'Saved ✓';
         updateMetadataStats();
     } else {
-        showToast('Error saving script', 'err');
+        DOM.btnSaveScript.textContent = 'Save Failed ⚠️';
+        if (!silent) showToast('Error saving script', 'err');
     }
+    setTimeout(() => {
+        DOM.btnSaveScript.textContent = '💾 Save Changes';
+    }, 1200);
 }
 
 async function analyzeScriptData() {
@@ -291,6 +297,7 @@ async function analyzeScriptData() {
             updateMetadataStats();
             const modeLabel = data.mode === 'ai' ? 'AI Director Mode' : 'Local Rules';
             showToast(`Script auto-directed successfully (${modeLabel})`, 'ok');
+            saveScriptData(true);
         } else {
             showToast('Error analyzing script', 'err');
         }
@@ -302,11 +309,41 @@ async function analyzeScriptData() {
     }
 }
 
+async function polishScriptData() {
+    DOM.btnPolishScript.disabled = true;
+    DOM.btnPolishScript.textContent = '✨ Polishing...';
+    
+    try {
+        const data = await apiPost('/api/script/polish', { text: DOM.editor.value });
+        if (data && data.ok) {
+            DOM.editor.value = data.text;
+            updateGutter();
+            updateMetadataStats();
+            const modeLabel = data.mode === 'ai' ? 'AI Polish Mode' : 'Local Rules';
+            showToast(`Script polished successfully (${modeLabel})`, 'ok');
+            saveScriptData(true);
+        } else {
+            showToast('Error polishing script', 'err');
+        }
+    } catch (e) {
+        showToast('Error connecting to script polish engine', 'err');
+    } finally {
+        DOM.btnPolishScript.disabled = false;
+        DOM.btnPolishScript.textContent = '✨ Polish Text';
+    }
+}
+
+let autoSaveTimeout = null;
 function setupGutterSync() {
     updateGutter();
     DOM.editor.addEventListener('input', () => {
         updateGutter();
         updateMetadataStats();
+        
+        clearTimeout(autoSaveTimeout);
+        autoSaveTimeout = setTimeout(() => {
+            saveScriptData(true);
+        }, 1500);
     });
     DOM.editor.addEventListener('scroll', () => {
         DOM.gutter.scrollTop = DOM.editor.scrollTop;
@@ -760,8 +797,9 @@ function showToast(message, type = '') {
 // ── EVENT ROUTERS & EVENT LISTENER MAPS ──
 function setupEventListeners() {
     // Save hotkey trigger
-    DOM.btnSaveScript.addEventListener('click', saveScriptData);
+    DOM.btnSaveScript.addEventListener('click', () => saveScriptData(false));
     DOM.btnAnalyzeScript.addEventListener('click', analyzeScriptData);
+    DOM.btnPolishScript.addEventListener('click', polishScriptData);
     document.addEventListener('keydown', (e) => {
         if ((e.metaKey || e.ctrlKey) && e.key === 's') {
             e.preventDefault();

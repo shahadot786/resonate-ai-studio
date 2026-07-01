@@ -176,6 +176,86 @@ async def save_script(request: Request):
     return {"ok": True, "lines": len([l for l in text.splitlines() if l.strip()])}
 
 
+@app.post("/api/script/polish")
+async def polish_script(request: Request):
+    data = await request.json()
+    text = data.get("text", "")
+    if not text:
+        return {"ok": True, "text": ""}
+        
+    use_gemini = False
+    gemini_key = getattr(config, "GEMINI_API_KEY", "")
+    if gemini_key and gemini_key.strip():
+        use_gemini = True
+
+    if use_gemini:
+        import requests
+        prompt = (
+            "You are a text processing expert. Your task is to clean up the provided script so it can be read smoothly by a TTS engine.\n\n"
+            "Rules:\n"
+            "1. Rewrite all numbers and numerical values into their fully spelled-out word equivalents. E.g., '1995' to 'nineteen ninety-five', '4.5' to 'four point five', '100' to 'one hundred', '$20' to 'twenty dollars'.\n"
+            "2. Convert all abbreviations to their full spoken equivalents. E.g., 'Mr.' to 'Mister', 'Dr.' to 'Doctor', 'Mrs.' to 'Missus', 'St.' to 'Street', 'vs.' to 'versus', 'etc.' to 'et cetera'.\n"
+            "3. Keep all voice and emotion override tags (like [voice:...] and [emotion:...]) exactly intact at the start or inline.\n"
+            "4. Do not output any notes, introductory phrases, or markdown wrapper blocks. Return ONLY the polished script text exactly.\n\n"
+            f"Script:\n{text}"
+        )
+        try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={gemini_key}"
+            payload = {
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {"temperature": 0.1}
+            }
+            res = requests.post(url, json=payload, timeout=15)
+            res_data = res.json()
+            ai_text = res_data["candidates"][0]["content"]["parts"][0]["text"].strip()
+            if ai_text.startswith("```"):
+                ai_text = "\n".join([line for line in ai_text.splitlines() if not line.startswith("```")])
+            return {"ok": True, "text": ai_text, "mode": "ai"}
+        except Exception as e:
+            print(f"Gemini script polish error: {e}")
+
+    # Fallback to local rule-based regex replacement (Offline)
+    import re
+    abbrev_map = {
+        r"\bMr\b\.?": "Mister",
+        r"\bMrs\b\.?": "Missus",
+        r"\bMs\b\.?": "Miss",
+        r"\bDr\b\.?": "Doctor",
+        r"\bSt\b\.?": "Street",
+        r"\bRd\b\.?": "Road",
+        r"\bvs\b\.?": "versus",
+        r"\bapprox\b\.?": "approximately",
+        r"\bdept\b\.?": "department",
+        r"\bmin\b\.?": "minutes",
+        r"\bsec\b\.?": "seconds",
+        r"\betc\b\.?": "et cetera",
+    }
+    
+    polished = text
+    for pattern, repl in abbrev_map.items():
+        polished = re.sub(pattern, repl, polished, flags=re.IGNORECASE)
+        
+    num_map = {
+        r"\b0\b": "zero",
+        r"\b1\b": "one",
+        r"\b2\b": "two",
+        r"\b3\b": "three",
+        r"\b4\b": "four",
+        r"\b5\b": "five",
+        r"\b6\b": "six",
+        r"\b7\b": "seven",
+        r"\b8\b": "eight",
+        r"\b9\b": "nine",
+    }
+    for pattern, repl in num_map.items():
+        polished = re.sub(pattern, repl, polished)
+
+    return {"ok": True, "text": polished, "mode": "rules"}
+
+
+# ── Routes: Reference voice ─────────────────────────────────
+
+
 @app.post("/api/script/analyze")
 async def analyze_script(request: Request):
     data = await request.json()
