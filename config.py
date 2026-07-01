@@ -3,10 +3,10 @@
 # ============================================================
 
 # ── Model ─────────────────────────────────────────────────────
-MODEL_PATH = "models/1.7B-CustomVoice"
+MODEL_PATH = "models/kokoro/kokoro-v1.0.onnx"
 
 # ── Voice ─────────────────────────────────────────────────────
-VOICE = "aiden"
+VOICE = "af_sarah"
 
 # ── Reference audio for voice cloning ─────────────────────────
 REF_AUDIO = "ref/ref_voice_male.wav"
@@ -42,13 +42,55 @@ SERVER_PORT = 8000
 
 # ── All available voices ─────────────────────────────────────
 VOICES = [
-    "aiden",
-    "ryan",
-    "eric",
-    "dylan",
-    "serena",
-    "vivian",
-    "ono_anna",
-    "sohee",
-    "uncle_fu",
+    # American Female
+    "af_sarah",
+    "af_bella",
+    "af_heart",
+    "af_nicole",
+    "af_sky",
+    "af_alloy",
+    "af_aoede",
+    "af_jessica",
+    "af_kore",
+    "af_nova",
+    "af_river",
+
+    # American Male
+    "am_adam",
+    "am_michael",
+    "am_fenrir",
+    "am_puck",
+    "am_echo",
+    "am_eric",
+    "am_liam",
+    "am_onyx",
+    "am_santa",
+
+    # British Female
+    "bf_alice",
+    "bf_emma",
+    "bf_isabella",
+    "bf_lily",
+
+    # British Male
+    "bm_daniel",
+    "bm_fable",
+    "bm_george",
+    "bm_lewis",
 ]
+
+# ── B-Roll Video Pipeline ────────────────────────────────────
+PEXELS_API_KEY      = "pOccPxW2ezZ5IwOsBYo7VDRiRj2zXUjk9TCOXHeGIZyxFekaMSUuxL5s"
+PIXABAY_API_KEY     = "56526229-bf7604a89c5531497f60e7f3c"
+COVERR_API_KEY      = ""   # optional – get free at coverr.co/api
+GEMINI_API_KEY      = "AQ.Ab8RN6L_hnsAPvlwPUd8Q6YUoYYMNnIVyaC6fJ4i5mmEgy3rLg"
+
+# Video output settings
+VIDEO_RESOLUTION    = "1920x1080"
+VIDEO_FPS           = 30
+VIDEO_DIR           = "outputs/video"
+VIDEO_SEGMENTS_DIR  = "outputs/video/segments"
+VIDEO_OUTPUT_FILE   = "outputs/video/final_video.mp4"
+
+# Keyword extraction mode: "rake" (offline) or "gemini" (free AI Studio key)
+KEYWORD_MODE        = "gemini"  # using Gemini 2.5 Flash (free tier)

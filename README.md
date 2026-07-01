@@ -1,22 +1,36 @@
 # Narrator
 
-Local AI voice generator for long-form narration and audiobook-style content. Runs entirely on-device using Apple Silicon (MLX) with the Qwen3-TTS model — no cloud APIs, no subscriptions.
+Local, production-grade AI voice studio and B-Roll video generator. Powered by **Kokoro-82M ONNX** for instant, studio-quality human voice synthesis, and integrated with an automated B-Roll video generator. Runs entirely on-device with zero-subscription, zero cloud APIs, and zero configuration.
+
+---
+
+## What We Implemented & How It Works
+
+This project features a fully automated workflow that handles script writing, voice generation, visual B-roll selection, and final video editing:
+
+```
+[ Your Script ] ➔ 🎙 Kokoro-82M ONNX ➔ [ Audio Chunks ] ➔ 🎛 Silence & Stitch ➔ [ final_audio.wav ]
+                                                                                   │
+[ final_video.mp4 ] 🏓 Multi-Clip Merge 🏓 Keyword Search (Gemini/Pexels) 🏓 Auto-Start B-Roll (Optional)
+```
+
+1. **Kokoro-82M ONNX Engine**: Replaced the heavy, slow MLX Qwen3-TTS engine with a lightweight, high-performance ONNX implementation of Kokoro-82M. It loads instantly, runs seamlessly on CPU or GPU, and produces hyper-realistic, human-like voice synthesis.
+2. **28 English Voice Profiles**: Expanded the active voice database to include 28 premium English voices grouped by region (US/UK) and narrative tone (soft, expressive, rich, conversational).
+3. **Pipeline Mode Selector**: A dynamic controller that allows you to target your output format:
+   - 🎙 **Audio Only**: Generates narration speech audio files. Hides video controls to keep the studio clean.
+   - ✨ **Both**: Generates high-quality audio, then immediately starts search & download of context-aware B-Roll clips, rendering a finished video automatically.
+   - 🎬 **Video Only**: Skips the audio synthesis step and builds B-Roll matching your existing output audio.
+4. **Scrollable Output Console**: Restructured the layout to keep control panel triggers fixed on screen, hosting all segment results, playback controls, and rendering players in a space-maximized, scrollable history container.
 
 ---
 
 ## Features
 
-- **Web Dashboard** — live browser UI with script editor, real-time progress, audio player
-- **Batch generation** — turn a full script into a single stitched audio file
-- **Single clip mode** — quickly test a piece of text
-- **Voice comparison** — generate the same text with all 9 available voices
-- **Voice cloning** — use a reference WAV to clone a custom voice
-- **Per-chunk overrides** — change voice or emotion on any line with `[voice:X]` `[emotion:X]` tags
-- **Silence padding** — configurable pause between chunks for natural pacing
-- **Loudness normalization** — EBU R128 standard for consistent volume
-- **MP3 export** — auto-convert final output alongside WAV
-- **Auto-resume** — interrupted batch runs pick up where they left off
-- **Reference voice upload** — drag-and-drop new voice files in the web UI
+- **Web Dashboard** — browser workspace with a custom line-numbered script editor, live progress streams, and embedded media players.
+- **28 High-Fidelity Studio Voices** — US and UK accents, male and female voices, ranging from deep cinematic to warm conversational.
+- **Dynamic Mode Switching** — toggle between Audio Only, Video Only, or Both.
+- **Visual B-Roll Integration** — automatically parses your script keywords (offline or via free Gemini Flash) to pull, stitch, and pad orientation-aware footage.
+- **Acoustic Engineering** — EBU R128 loudness normalization, custom silence gap padding, and automatic WAV/MP3 conversion.
 
 ---
 
@@ -24,39 +38,13 @@ Local AI voice generator for long-form narration and audiobook-style content. Ru
 
 | Dependency | Version | Notes |
 |------------|---------|-------|
-| macOS | Apple Silicon (M1/M2/M3/M4) | Required for MLX |
-| Python | 3.11+ | |
-| mlx-audio | 0.4.4+ | `pip install mlx-audio` |
-| FastAPI | 0.100+ | `pip install fastapi uvicorn` |
-| ffmpeg | 7.0+ | `brew install ffmpeg` |
-
-> **Memory:** The 1.7B model uses ~11 GB peak RAM during generation. 16 GB Macs will work but may swap. 24+ GB recommended for comfortable batch runs.
-
----
-
-## Project Structure
-
-```
-narrator/
-├── config.py              # All settings (voice, speed, paths, pipeline)
-├── core/
-│   ├── __init__.py
-│   ├── model.py           # TTS model loading
-│   ├── audio.py           # Generation, stitching, normalization, MP3
-│   └── script.py          # Script parsing with per-chunk overrides
-├── server.py              # FastAPI web dashboard backend
-├── web/
-│   ├── index.html         # Dashboard UI
-│   ├── style.css          # Dark glassmorphism theme
-│   └── app.js             # Client-side logic + SSE
-├── generate_batch.py      # CLI: script.txt → full episode audio
-├── generate_single.py     # CLI: inline text → single clip
-├── test_voices.py         # CLI: compare all voices side by side
-├── script.txt             # Your narration script
-├── ref/                   # Reference voice files
-├── models/                # TTS model weights (gitignored)
-└── outputs/               # Generated audio (gitignored)
-```
+| macOS / Win / Linux | Any | Works on standard CPUs/GPUs via ONNX |
+| Python | 3.10+ | |
+| kokoro-onnx | 0.5.0+ | `pip install kokoro-onnx` |
+| onnxruntime | 1.16+ | Runs the Kokoro model |
+| soundfile | 0.12+ | Handles high-fidelity audio writing |
+| FastAPI | 0.110+ | Web dashboard backend |
+| ffmpeg | 7.0+ | Required for audio stitching and video merging |
 
 ---
 
@@ -69,336 +57,125 @@ git clone <your-repo-url> narrator
 cd narrator
 ```
 
-### 2. Create a virtual environment
+### 2. Set up Virtual Environment
+
+Create a virtual environment and install dependencies:
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
+pip install -r requirements.txt
 ```
 
-### 3. Install dependencies
+*(Ensure `ffmpeg` is installed on your system. For macOS: `brew install ffmpeg`)*
 
-```bash
-pip install mlx-audio fastapi uvicorn python-multipart
-```
+### 3. Model Weights Auto-Download
 
-### 4. Install ffmpeg (if not already installed)
-
-```bash
-brew install ffmpeg
-```
-
-### 5. Download the model
-
-Download the Qwen3-TTS-12Hz-1.7B model with CustomVoice support and place it in the `models/` directory:
-
-```
-models/
-└── 1.7B-CustomVoice/
-    ├── config.json
-    ├── model.safetensors
-    ├── tokenizer_config.json
-    ├── vocab.json
-    ├── merges.txt
-    ├── speech_tokenizer/
-    └── ...
-```
-
-### 6. Add a reference voice (for voice cloning)
-
-Place your reference WAV file in the `ref/` directory. The reference audio should be:
-
-- **5–15 seconds** of clear speech
-- **Single speaker**, no background noise
-- **WAV format**, any sample rate (22050 Hz recommended)
-
-Update `config.py` with the matching transcript:
-
-```python
-REF_AUDIO = "ref/ref_voice_male.wav"
-REF_TEXT = "Exact transcript of what is spoken in the reference audio."
-```
-
-Or upload via the web dashboard (see below).
+You do not need to download the models manually! The application checks for weights on startup. The first time you generate audio, it will automatically pull the files from GitHub Releases and place them in the correct directories:
+- `models/kokoro/kokoro-v1.0.onnx` (~300MB)
+- `models/kokoro/voices-v1.0.bin` (~27MB)
 
 ---
 
-## Usage
+## Audio Generation & Styling Guide
 
-### 🖥️ Web Dashboard (recommended)
+Kokoro is a style-based model that derives its emotion, speed, and pausing directly from **punctuation, spacing, and voice presets**. Below is a complete guide to generating the most human-like delivery.
 
-The web dashboard gives you a full visual interface to write scripts, configure settings, generate audio, and play results — all in the browser.
+### 1. Controlling Prosody & Emotions via Punctuation
 
-**Start the server:**
+Kokoro is highly sensitive to text structure. You can design custom emotional pacing using standard punctuation:
 
-```bash
-python3 server.py
+*   **Commas (`,`)**: Creates a natural, short pause (approx. 200–300ms). Perfect for breathing breaks.
+*   **Periods (`.`) / Em-Dashes (`—`)**: Triggers longer, dramatic pauses (approx. 500–800ms) to let thoughts settle.
+*   **Ellipses (`...` or `…`)**: Forces a soft, trailing-off pause. Excellent for suspenseful transitions.
+*   **Exclamation Marks (`!`)**: Inject energy and emphasis into the sentence, raising the emotional peak.
+*   **Question Marks (`?`)**: Elevate the pitch contour towards the end of the sentence for a realistic questioning lift.
+
+### 2. Script Example with Emotional Tags & Presets
+
+You can format your script in the workspace to target specific voices per line. 
+
+```text
+The day Paul Reston shook my hand and called me the most talented analyst he'd ever worked with, I believed him. 
+
+[voice:am_adam] That was my first mistake. 
+
+[voice:af_bella] My second was letting him be the only person in that building... who knew exactly how good I was.
+
+[voice:bf_emma] Did you really think you could get away with it? 
 ```
 
-**Open in browser:**
-
-```
-http://127.0.0.1:8000
-```
-
-#### Dashboard Features
-
-| Area | Description |
-|------|-------------|
-| **Script Workspace** | Left-side console with line-numbered script editor and visual statistics (word count, chunk count, estimated runtime). |
-| **Active Controls** | Left-sidebar containing preset selectors, playback speed slider, and acoustic engineering switches. |
-| **Voice Cloning Console** | Drag-and-drop reference WAV/MP3 uploads, active profile selection, and spoken transcript sync. |
-| **Quick Tag Helpers** | Inject inline override tags (like `[voice:serena]` or `[emotion:Quiet Rage]`) directly at the cursor's location. |
-| **Segment History** | Collapsible segments list showing status, duration, speed, play button, and individual deletion (✕). |
-| **Output Console** | Integrated timeline playback bar containing seeking options, elapsed indicators, and WAV/MP3 downloads. |
-
-#### Real-time Progress
-
-The generation console streams updates live via Server-Sent Events (SSE):
-- High-tech neon progress bar fill matches segment generation.
-- Detailed progress status updates (e.g. *Applying EBU R128 Loudness Normalization...*, *Booting Qwen3-TTS Engine...*).
-- Status overlay changes color depending on connection and pipeline state.
-- Abort generation mid-run using the primary Stop button.
-
-#### Keyboard Shortcuts
-
-| Shortcut | Action |
-|----------|--------|
-| `Cmd+S` / `Ctrl+S` | Save script |
+*   **Inline Speakers**: Add `[voice:voice_id]` at the beginning of any line to change speakers on the fly.
+*   **Optimal Speed**: Adjust the speed slider between **0.95x and 1.05x**. Values below 1.0x make the voice sound more reflective and serious; values above 1.0x sound more urgent and conversational.
 
 ---
 
-### Generate a full episode (CLI)
+## Available Kokoro Voices
 
-**Step 1 — Write your script in `script.txt`:**
+You can choose from 28 studio-grade voices directly in the Web UI:
 
-```
-The day Paul Reston shook my hand, I believed him. That was my first mistake.
-
-I came to Hargrove & Associates three years out of Northwestern with a finance degree.
-
-[voice:serena] [emotion:Whispered, fearful] I heard footsteps behind me.
-
-Paul hired me out of a pool of forty-seven candidates.
-```
-
-> **Format:** Each non-empty line = one chunk. Blank lines are separators (ignored). Use `[voice:X]` and `[emotion:X]` tags to override per line.
-
-**Step 2 — Run:**
-
-```bash
-python3 generate_batch.py
-```
-
-**Step 3 — Output:**
-
-```
-outputs/
-├── final_episode.wav      # Stitched full audio (normalized)
-├── final_episode.mp3      # MP3 version (if enabled)
-└── chunks/
-    ├── chunk_0000.wav
-    ├── chunk_0001.wav
-    └── ...
-```
-
-**Step 4 — Play:**
-
-```bash
-afplay outputs/final_episode.wav
-```
-
-#### Auto-resume
-
-If the process is interrupted, just re-run the same command. Already-generated chunks are detected and skipped automatically.
-
-#### Re-generating from scratch
-
-```bash
-rm -rf outputs/chunks/
-python3 generate_batch.py
-```
+| Gender / Accent | Voice ID | Description |
+|-----------------|----------|-------------|
+| **US Female**   | `af_sarah` | Soft & narrative |
+|                 | `af_bella` | Expressive & warm |
+|                 | `af_heart` | Warm & friendly |
+|                 | `af_nicole` | Clear & professional |
+|                 | `af_sky` | Bright & energetic |
+|                 | `af_alloy` | Balanced & natural |
+|                 | `af_aoede` | Narrative storyteller |
+|                 | `af_jessica`| Crisp & articulate |
+|                 | `af_kore` | Sweet & gentle |
+|                 | `af_nova` | High-energy |
+|                 | `af_river` | Calm & conversational |
+| **US Male**     | `am_adam` | Deep & cinematic |
+|                 | `am_michael`| Natural & relaxed |
+|                 | `am_fenrir` | Rich & authoritative |
+|                 | `am_puck` | Animated & lively |
+|                 | `am_echo` | Corporate presenter |
+|                 | `am_eric` | Conversational |
+|                 | `am_liam` | Friendly & warm |
+|                 | `am_onyx` | Deep authority |
+|                 | `am_santa` | Festive & classic |
+| **UK Female**   | `bf_alice` | Gentle & narrative |
+|                 | `bf_emma` | Elegant & polished |
+|                 | `bf_isabella`| Storyteller |
+|                 | `bf_lily` | Bright |
+| **UK Male**     | `bm_daniel` | Warm |
+|                 | `bm_fable` | Dramatic |
+|                 | `bm_george` | Classic & formal |
+|                 | `bm_lewis` | Conversational |
 
 ---
 
-### Generate a single clip (CLI)
-
-Edit the text directly inside `generate_single.py`, then run:
-
-```bash
-python3 generate_single.py
-```
-
-Output: `outputs/test_output.wav`
-
----
-
-### Compare all voices (CLI)
-
-```bash
-python3 test_voices.py
-```
-
-Output: `voice_tests/` with one WAV per voice. Listen to each and update `VOICE` in `config.py`.
-
----
-
-## Configuration
-
-All settings live in **`config.py`**. The web dashboard also lets you change these at runtime.
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `MODEL_PATH` | `models/1.7B-CustomVoice` | Path to the Qwen3-TTS model |
-| `VOICE` | `aiden` | Voice preset to use |
-| `REF_AUDIO` | `ref/ref_voice_male.wav` | Reference audio for voice cloning |
-| `REF_TEXT` | *(transcript)* | Exact transcript of the reference audio |
-| `SPEED` | `1.0` | Playback speed multiplier |
-| `EMOTION` | *(see below)* | Emotional/style instruction for the model |
-| `SILENCE_PADDING` | `0.8` | Seconds of silence between chunks |
-| `NORMALIZE_AUDIO` | `False` | EBU R128 loudness normalization |
-| `EXPORT_MP3` | `False` | Also export MP3 alongside WAV |
-| `SCRIPT_FILE` | `script.txt` | Input script file for batch mode |
-| `OUTPUT_FILE` | `outputs/final_episode.wav` | Final stitched output path |
-| `CHUNKS_DIR` | `outputs/chunks` | Directory for individual chunks |
-| `SERVER_HOST` | `127.0.0.1` | Web dashboard host |
-| `SERVER_PORT` | `8000` | Web dashboard port |
-
-### Emotion / Instruct
-
-The `EMOTION` string controls the model's tone, pacing, and emotional delivery. Examples:
-
-```python
-# Cinematic narration
-EMOTION = "Deep, serious, and emotionally controlled. Speak slowly with gravitas and natural pauses."
-
-# Warm and conversational
-EMOTION = "Warm, friendly, and approachable. Speak at a natural pace like telling a story to a close friend."
-
-# News anchor
-EMOTION = "Professional and authoritative. Clear enunciation, steady pacing, neutral tone."
-
-# Thriller / suspense
-EMOTION = "Tense and urgent. Start with a whisper, build intensity. Short pauses for suspense."
-```
-
-### Per-Chunk Overrides
-
-Change voice or emotion for specific lines using inline tags. The script parser supports both explicit key-value overrides and clean inline shorthand brackets:
+## Project Structure
 
 ```
-Normal narration line with default voice and emotion.
-
-[voice:serena] This line uses Serena's voice instead.
-
-[emotion:Whispered, fearful] This line uses a different emotion.
-
-[voice:ryan] [emotion:Angry] This combines both explicit overrides.
-
-# Shorthand Brackets (High-End UX)
-The day Paul Reston shook my hand, [slight pause] I believed him. [Bitter laugh] That was my first mistake.
+narrator/
+├── config.py              # Configuration (Voices, paths, video APIs)
+├── core/
+│   ├── model.py           # Kokoro-ONNX loader & auto-downloader
+│   ├── audio.py           # Synthesis, normalization, stitching, MP3
+│   ├── script.py          # Script tag parsers
+│   └── video.py           # B-Roll video extraction & stitching engine
+├── server.py              # FastAPI server orchestrator
+├── web/
+│   ├── index.html         # Workspace dashboard interface
+│   ├── style.css          # Glassmorphic dark styling
+│   └── app.js             # SSE state manager & mode selector UI
+├── voice_tests/           # Folder containing generated voice previews (gitignored)
+└── requirements.txt       # Project python dependencies
 ```
-
-When you write shorthand brackets:
-- **Never spoken**: Shorthand tags (like `[slight pause]` or `[Bitter laugh]`) are automatically stripped from the text sent to the generator so they are never read aloud.
-- **Combined instructions**: If multiple tags exist in a single line, they are joined together (e.g., `"slight pause, Bitter laugh"`) and passed to the model as a custom emotion instruction for that segment.
-
-
-### Available Voices
-
-| Voice | Style |
-|-------|-------|
-| `aiden` | Male, deep, cinematic |
-| `ryan` | Male, clear, neutral |
-| `eric` | Male, warm |
-| `dylan` | Male, young |
-| `serena` | Female, smooth |
-| `vivian` | Female, expressive |
-| `ono_anna` | Female, calm |
-| `sohee` | Female, soft |
-| `uncle_fu` | Male, character voice |
-
----
-
-## Script Writing Tips
-
-### Formatting
-
-- **One line = one chunk.** The model generates each line independently.
-- **Blank lines** between chunks are ignored (use them for readability).
-- Keep each chunk under **~200 words** for consistent quality.
-- Use `[voice:X]` and `[emotion:X]` for per-line overrides.
-
-### For best results
-
-- Write in full sentences with natural punctuation.
-- Use em dashes (—) for dramatic pauses.
-- Use ellipsis (...) for trailing off.
-- Avoid abbreviations — write "Mister" not "Mr."
-- Spell out numbers in narration — "forty-seven" not "47".
-- Start a new line at natural scene or paragraph breaks.
-
----
-
-## Audio Pipeline
-
-The audio pipeline runs automatically after all chunks are generated:
-
-```
-Chunks → Silence Padding → Stitch (ffmpeg) → Normalize (EBU R128) → MP3 Export
-```
-
-| Stage | Setting | What it does |
-|-------|---------|-------------|
-| Silence Padding | `SILENCE_PADDING = 0.8` | Inserts 0.8s of silence between chunks for natural pacing |
-| Normalization | `NORMALIZE_AUDIO = True` | Applies EBU R128 loudness normalization (target -16 LUFS) |
-| MP3 Export | `EXPORT_MP3 = True` | Converts final WAV to MP3 at 192kbps |
-
-All settings are configurable in `config.py` or the web dashboard.
-
----
-
-## Performance
-
-Benchmarks on Apple Silicon (M-series, 16 GB RAM):
-
-| Metric | Typical Value |
-|--------|---------------|
-| Model load time | ~30 seconds |
-| Generation speed | ~0.7–0.9x real-time |
-| 1 min of audio | ~60–90 seconds to generate |
-| Peak memory | ~11 GB |
-| 30 min episode | ~45–60 min total processing |
-
-> Generation runs entirely on the Neural Engine / GPU via MLX. No internet connection needed after model download.
 
 ---
 
 ## Troubleshooting
 
-### "Stitch failed or no chunks"
-- Make sure `ffmpeg` is installed: `brew install ffmpeg`
-- Check that `outputs/chunks/` contains `.wav` files
+### Generation stalls on "Loading Kokoro ONNX Engine"
+- The first generation downloads ~327MB of weights from GitHub releases. Ensure you have an active internet connection.
+- Check the terminal logs to monitor the download percentages.
 
-### Model loading errors
-- Verify the model is at `models/1.7B-CustomVoice/` and contains `model.safetensors`
-- Check available RAM — the model needs ~11 GB
+### "Audio overlaps or cuts off"
+- Keep chunks bounded by scene breaks. Extremely long run-on lines can lead to pacing issues. Break your script into distinct lines in the editor.
 
-### Web dashboard won't start
-- Check that FastAPI is installed: `pip install fastapi uvicorn python-multipart`
-- Check port 8000 isn't in use: `lsof -i :8000`
-
-### Audio quality issues
-- Try a shorter chunk (fewer words per line)
-- Adjust the `EMOTION` instruction
-- Test different voices with `test_voices.py`
-- Ensure the reference audio is clean (no background noise, single speaker)
-
-### Interrupted generation
-- Just re-run the same command — it auto-resumes from the last completed chunk
-
----
-
-## License
-
-For personal use. The Qwen3-TTS model has its own license — check the model repository for terms.
+### "Stitch failed"
+- Ensure `ffmpeg` is in your system path: run `ffmpeg -version` in terminal.

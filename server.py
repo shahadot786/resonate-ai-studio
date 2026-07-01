@@ -52,9 +52,23 @@ _gen_state = {
 # SSE subscribers (asyncio queues)
 _sse_subscribers: list[asyncio.Queue] = []
 
+# Video generation state
+_video_state = {
+    "running": False,
+    "status": "idle",      # idle | searching | merging | done | error | cancelled
+    "message": "",
+    "current_chunk": 0,
+    "total_chunks": 0,
+    "segments_done": [],
+    "output_file": None,
+}
+
+# SSE subscribers for video progress
+_video_sse_subscribers: list[asyncio.Queue] = []
+
 
 def _broadcast(event: str, data: dict):
-    """Push an event to all SSE subscribers."""
+    """Push an event to all audio SSE subscribers."""
     msg = f"event: {event}\ndata: {json.dumps(data)}\n\n"
     dead = []
     for q in _sse_subscribers:
@@ -65,6 +79,20 @@ def _broadcast(event: str, data: dict):
     for q in dead:
         if q in _sse_subscribers:
             _sse_subscribers.remove(q)
+
+
+def _broadcast_video(event: str, data: dict):
+    """Push an event to all video SSE subscribers."""
+    msg = f"event: {event}\ndata: {json.dumps(data)}\n\n"
+    dead = []
+    for q in _video_sse_subscribers:
+        try:
+            q.put_nowait(msg)
+        except Exception:
+            dead.append(q)
+    for q in dead:
+        if q in _video_sse_subscribers:
+            _video_sse_subscribers.remove(q)
 
 
 def _update_state(**kwargs):
@@ -120,6 +148,14 @@ async def list_voices():
     return {"voices": config.VOICES}
 
 
+@app.get("/api/voices/preview/{voice_name}")
+async def get_voice_preview(voice_name: str):
+    path = Path("voice_tests") / f"{voice_name}_sample.wav"
+    if path.exists():
+        return FileResponse(path, media_type="audio/wav")
+    return JSONResponse({"error": "Preview not found"}, status_code=404)
+
+
 # ── Routes: Script ───────────────────────────────────────────
 
 
@@ -138,6 +174,178 @@ async def save_script(request: Request):
     text = data.get("text", "")
     Path(config.SCRIPT_FILE).write_text(text, encoding="utf-8")
     return {"ok": True, "lines": len([l for l in text.splitlines() if l.strip()])}
+
+
+@app.post("/api/script/polish")
+async def polish_script(request: Request):
+    data = await request.json()
+    text = data.get("text", "")
+    if not text:
+        return {"ok": True, "text": ""}
+        
+    use_gemini = False
+    gemini_key = getattr(config, "GEMINI_API_KEY", "")
+    if gemini_key and gemini_key.strip():
+        use_gemini = True
+
+    if use_gemini:
+        import requests
+        prompt = (
+            "You are a text processing expert. Your task is to clean up the provided script so it can be read smoothly by a TTS engine.\n\n"
+            "Rules:\n"
+            "1. Rewrite all numbers and numerical values into their fully spelled-out word equivalents. E.g., '1995' to 'nineteen ninety-five', '4.5' to 'four point five', '100' to 'one hundred', '$20' to 'twenty dollars'.\n"
+            "2. Convert all abbreviations to their full spoken equivalents. E.g., 'Mr.' to 'Mister', 'Dr.' to 'Doctor', 'Mrs.' to 'Missus', 'St.' to 'Street', 'vs.' to 'versus', 'etc.' to 'et cetera'.\n"
+            "3. Keep all voice and emotion override tags (like [voice:...] and [emotion:...]) exactly intact at the start or inline.\n"
+            "4. Do not output any notes, introductory phrases, or markdown wrapper blocks. Return ONLY the polished script text exactly.\n\n"
+            f"Script:\n{text}"
+        )
+        try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={gemini_key}"
+            payload = {
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {"temperature": 0.1}
+            }
+            res = requests.post(url, json=payload, timeout=15)
+            res_data = res.json()
+            ai_text = res_data["candidates"][0]["content"]["parts"][0]["text"].strip()
+            if ai_text.startswith("```"):
+                ai_text = "\n".join([line for line in ai_text.splitlines() if not line.startswith("```")])
+            return {"ok": True, "text": ai_text, "mode": "ai"}
+        except Exception as e:
+            print(f"Gemini script polish error: {e}")
+
+    # Fallback to local rule-based regex replacement (Offline)
+    import re
+    abbrev_map = {
+        r"\bMr\b\.?": "Mister",
+        r"\bMrs\b\.?": "Missus",
+        r"\bMs\b\.?": "Miss",
+        r"\bDr\b\.?": "Doctor",
+        r"\bSt\b\.?": "Street",
+        r"\bRd\b\.?": "Road",
+        r"\bvs\b\.?": "versus",
+        r"\bapprox\b\.?": "approximately",
+        r"\bdept\b\.?": "department",
+        r"\bmin\b\.?": "minutes",
+        r"\bsec\b\.?": "seconds",
+        r"\betc\b\.?": "et cetera",
+    }
+    
+    polished = text
+    for pattern, repl in abbrev_map.items():
+        polished = re.sub(pattern, repl, polished, flags=re.IGNORECASE)
+        
+    num_map = {
+        r"\b0\b": "zero",
+        r"\b1\b": "one",
+        r"\b2\b": "two",
+        r"\b3\b": "three",
+        r"\b4\b": "four",
+        r"\b5\b": "five",
+        r"\b6\b": "six",
+        r"\b7\b": "seven",
+        r"\b8\b": "eight",
+        r"\b9\b": "nine",
+    }
+    for pattern, repl in num_map.items():
+        polished = re.sub(pattern, repl, polished)
+
+    return {"ok": True, "text": polished, "mode": "rules"}
+
+
+# ── Routes: Reference voice ─────────────────────────────────
+
+
+@app.post("/api/script/analyze")
+async def analyze_script(request: Request):
+    data = await request.json()
+    text = data.get("text", "")
+    if not text:
+        return {"ok": True, "text": ""}
+        
+    lines = text.splitlines()
+    analyzed_lines = []
+    
+    use_gemini = False
+    gemini_key = getattr(config, "GEMINI_API_KEY", "")
+    if gemini_key and gemini_key.strip():
+        use_gemini = True
+
+    if use_gemini:
+        import requests
+        prompt = (
+            "You are a professional audio drama and audiobook script director. "
+            "Your task is to take this script and enhance it by injecting appropriate tags "
+            "for Kokoro TTS at the start of each line where a mood changes or a voice switches.\n\n"
+            "Rules:\n"
+            "- Available voice overrides: [voice:af_sarah], [voice:af_bella], [voice:af_heart], "
+            "[voice:am_adam], [voice:am_michael], [voice:bf_emma], [voice:bm_george]\n"
+            "- Available emotion overrides: [emotion:Simmering Anger] (for rage/heat), "
+            "[emotion:Cinematic Narrative] (standard narration), [emotion:Whispered Suspense] (fear/secrecy/night), "
+            "[emotion:Cold Precision] (flatness/precision), [emotion:Raw Vulnerability] (sorrow/pain), "
+            "[emotion:Urgent Excitement] (energy), [emotion:Empowered Resolution] (confidence), "
+            "[emotion:Bitter Sarcasm] (irony)\n"
+            "- Keep spacing clean. Inject tags at the very start of lines where appropriate.\n"
+            "- Do not add metadata, titles, or formatting wrapper text. Output ONLY the updated script text exactly.\n\n"
+            f"Script:\n{text}"
+        )
+        
+        try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={gemini_key}"
+            payload = {
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {"temperature": 0.2}
+            }
+            res = requests.post(url, json=payload, timeout=15)
+            res_data = res.json()
+            ai_text = res_data["candidates"][0]["content"]["parts"][0]["text"].strip()
+            if ai_text.startswith("```"):
+                ai_text = "\n".join([line for line in ai_text.splitlines() if not line.startswith("```")])
+            return {"ok": True, "text": ai_text, "mode": "ai"}
+        except Exception as e:
+            print(f"Gemini script analysis error: {e}")
+
+    # Fallback to pure offline rule-based heuristics
+    import re
+    default_voices = ["af_sarah", "am_adam", "af_bella", "bm_george"]
+    voice_idx = 0
+    
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            analyzed_lines.append("")
+            continue
+            
+        if stripped.startswith("[voice:") or stripped.startswith("[emotion:"):
+            analyzed_lines.append(line)
+            continue
+            
+        injected_tags = []
+        
+        # Heuristics
+        if re.search(r"\b(rage|hate|angry|betray|lie|lied|fake|enemy|scoundrel)\b", stripped, re.IGNORECASE):
+            injected_tags.append("[emotion:Simmering Anger]")
+        elif re.search(r"\b(quiet|silent|whisper|shadow|dark|night|breath|creepy|haunt|scared)\b", stripped, re.IGNORECASE):
+            injected_tags.append("[emotion:Whispered Suspense]")
+        elif re.search(r"\b(cry|weep|hurt|pain|sad|lost|tears|broken|alone|grief|sorrow)\b", stripped, re.IGNORECASE):
+            injected_tags.append("[emotion:Raw Vulnerability]")
+        elif re.search(r"\b(run|fast|excited|hurry|victory|win|shout|yes|great|awesome)\b", stripped, re.IGNORECASE):
+            injected_tags.append("[emotion:Urgent Excitement]")
+        elif re.search(r"\b(clinical|flat|dead|cold|calculation|math|science|fact)\b", stripped, re.IGNORECASE):
+            injected_tags.append("[emotion:Cold Precision]")
+        else:
+            if len(stripped.split()) > 10:
+                injected_tags.append("[emotion:Cinematic Narrative]")
+                
+        if "[voice:" not in line:
+            current_voice = default_voices[voice_idx % len(default_voices)]
+            injected_tags.insert(0, f"[voice:{current_voice}]")
+            voice_idx += 1
+            
+        joined_tags = " ".join(injected_tags)
+        analyzed_lines.append(f"{joined_tags} {stripped}")
+        
+    return {"ok": True, "text": "\n".join(analyzed_lines), "mode": "rules"}
 
 
 # ── Routes: Reference voice ─────────────────────────────────
@@ -502,7 +710,10 @@ async def delete_chunk(filename: str):
 async def clear_outputs():
     if _gen_state["running"]:
         return JSONResponse({"ok": False, "error": "Generation in progress"}, 409)
+    if _video_state["running"]:
+        return JSONResponse({"ok": False, "error": "Video generation in progress"}, 409)
 
+    # ── Clear audio outputs ───────────────────────────────────
     if os.path.exists(config.CHUNKS_DIR):
         shutil.rmtree(config.CHUNKS_DIR)
     for ext in [".wav", ".mp3"]:
@@ -519,6 +730,307 @@ async def clear_outputs():
         "current_chunk": 0, "total_chunks": 0, "chunks_done": [],
     })
 
+    # ── Clear video outputs ───────────────────────────────────
+    if os.path.exists(config.VIDEO_SEGMENTS_DIR):
+        shutil.rmtree(config.VIDEO_SEGMENTS_DIR)
+    if os.path.exists(config.VIDEO_OUTPUT_FILE):
+        os.remove(config.VIDEO_OUTPUT_FILE)
+
+    _video_state.update(
+        current_chunk=0, total_chunks=0, segments_done=[],
+        status="idle", message="", output_file=None,
+    )
+    _broadcast_video("progress", {
+        "running": False, "status": "idle", "message": "",
+        "current_chunk": 0, "total_chunks": 0, "segments_done": [],
+    })
+
+    return {"ok": True}
+
+
+# ── Routes: Video (B-Roll) ──────────────────────────────
+
+_video_worker_process = None
+_video_worker_task    = None
+
+
+def _update_video_state(**kwargs):
+    """Update video generation state and broadcast to SSE."""
+    _video_state.update(kwargs)
+    _broadcast_video("progress", {
+        "running":       _video_state["running"],
+        "status":        _video_state["status"],
+        "message":       _video_state["message"],
+        "current_chunk": _video_state["current_chunk"],
+        "total_chunks":  _video_state["total_chunks"],
+        "segments_done": _video_state["segments_done"],
+    })
+
+
+async def _run_video_worker():
+    """Spawn core/video_worker.py as a subprocess and stream progress."""
+    global _video_worker_process
+
+    config_path = os.path.join("outputs", ".video_worker_config.json")
+    os.makedirs("outputs", exist_ok=True)
+
+    worker_cfg = {
+        "pexels_api_key":  config.PEXELS_API_KEY,
+        "pixabay_api_key": config.PIXABAY_API_KEY,
+        "coverr_api_key":  config.COVERR_API_KEY,
+        "gemini_api_key":  config.GEMINI_API_KEY,
+        "keyword_mode":    config.KEYWORD_MODE,
+        "resolution":      config.VIDEO_RESOLUTION,
+        "fps":             config.VIDEO_FPS,
+        "script_file":     config.SCRIPT_FILE,
+        "chunks_dir":      config.CHUNKS_DIR,
+        "segments_dir":    config.VIDEO_SEGMENTS_DIR,
+        "output_file":     config.VIDEO_OUTPUT_FILE,
+        "audio_file":      config.OUTPUT_FILE,
+    }
+
+    with open(config_path, "w") as f:
+        json.dump(worker_cfg, f)
+
+    try:
+        python = sys.executable
+        _video_worker_process = await asyncio.create_subprocess_exec(
+            python, "core/video_worker.py", config_path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=os.getcwd(),
+        )
+
+        while True:
+            line = await _video_worker_process.stdout.readline()
+            if not line:
+                break
+
+            line = line.decode("utf-8", errors="replace").strip()
+            if not line:
+                continue
+
+            try:
+                data = json.loads(line)
+                event = data.get("event", "")
+
+                if event in ("status", "segment_progress"):
+                    _update_video_state(
+                        status=data.get("status", _video_state["status"]),
+                        message=data.get("message", _video_state["message"]),
+                        current_chunk=data.get("current_chunk", _video_state["current_chunk"]),
+                        total_chunks=data.get("total_chunks", _video_state["total_chunks"]),
+                    )
+
+                elif event == "segment_done":
+                    _update_video_state(
+                        status=data.get("status", _video_state["status"]),
+                        message=data.get("message", _video_state["message"]),
+                        current_chunk=data.get("current_chunk", _video_state["current_chunk"]),
+                        total_chunks=data.get("total_chunks", _video_state["total_chunks"]),
+                        segments_done=data.get("segments_done", _video_state["segments_done"]),
+                    )
+
+                elif event == "done":
+                    _update_video_state(
+                        running=False,
+                        status="done",
+                        message=data.get("message", "Video ready!"),
+                        output_file=data.get("output_file"),
+                        segments_done=data.get("segments_done", _video_state["segments_done"]),
+                        current_chunk=data.get("current_chunk", _video_state["current_chunk"]),
+                        total_chunks=data.get("total_chunks", _video_state["total_chunks"]),
+                    )
+
+                elif event == "error":
+                    _update_video_state(
+                        running=False,
+                        status="error",
+                        message=data.get("message", "Video generation failed"),
+                        segments_done=data.get("segments_done", _video_state["segments_done"]),
+                    )
+
+            except json.JSONDecodeError:
+                pass
+
+        await _video_worker_process.wait()
+
+        if _video_worker_process.returncode != 0 and _video_state["status"] not in ("done", "error", "cancelled"):
+            stderr = await _video_worker_process.stderr.read()
+            err_msg = stderr.decode("utf-8", errors="replace").strip()[-300:]
+            _update_video_state(
+                running=False,
+                status="error",
+                message=f"Worker crashed: {err_msg}" if err_msg else "Video worker failed",
+            )
+
+    except asyncio.CancelledError:
+        if _video_worker_process and _video_worker_process.returncode is None:
+            _video_worker_process.terminate()
+            await _video_worker_process.wait()
+        _update_video_state(running=False, status="cancelled", message="Video generation cancelled")
+
+    except Exception as e:
+        _update_video_state(running=False, status="error", message=str(e))
+
+    finally:
+        _video_worker_process = None
+        if os.path.exists(config_path):
+            os.remove(config_path)
+
+
+@app.get("/api/video/status")
+async def video_status():
+    return {
+        "running":       _video_state["running"],
+        "status":        _video_state["status"],
+        "message":       _video_state["message"],
+        "current_chunk": _video_state["current_chunk"],
+        "total_chunks":  _video_state["total_chunks"],
+        "output_file":   _video_state["output_file"],
+        "segments_done": _video_state["segments_done"],
+    }
+
+
+@app.post("/api/video/create")
+async def start_video_generation(request: Request):
+    global _video_worker_task
+
+    if _video_state["running"]:
+        return JSONResponse({"ok": False, "error": "Video generation already in progress"}, 409)
+
+    # Check that audio exists
+    if not os.path.exists(config.OUTPUT_FILE):
+        return JSONResponse({"ok": False, "error": "No audio file found. Generate audio first."}, 400)
+
+    _video_state["running"] = True
+    _video_state["output_file"] = None
+    _video_state["segments_done"] = []
+    _video_state["current_chunk"] = 0
+    _video_state["total_chunks"] = 0
+
+    _update_video_state(status="searching", message="Starting video worker…")
+
+    _video_worker_task = asyncio.create_task(_run_video_worker())
+    return {"ok": True}
+
+
+@app.post("/api/video/cancel")
+async def cancel_video_generation():
+    global _video_worker_task, _video_worker_process
+
+    if not _video_state["running"]:
+        return {"ok": False, "message": "Nothing running"}
+
+    if _video_worker_task and not _video_worker_task.done():
+        _video_worker_task.cancel()
+
+    if _video_worker_process and _video_worker_process.returncode is None:
+        try:
+            _video_worker_process.terminate()
+        except ProcessLookupError:
+            pass
+
+    _update_video_state(running=False, status="cancelled", message="Video generation cancelled")
+    return {"ok": True}
+
+
+@app.get("/api/video/events")
+async def video_events_sse(request: Request):
+    """SSE stream for real-time video generation progress."""
+    queue = asyncio.Queue()
+    _video_sse_subscribers.append(queue)
+
+    async def event_stream():
+        snapshot = {k: _video_state[k] for k in
+                    ["running", "status", "message", "current_chunk",
+                     "total_chunks", "segments_done"]}
+        yield f"event: progress\ndata: {json.dumps(snapshot)}\n\n"
+
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    msg = await asyncio.wait_for(queue.get(), timeout=15.0)
+                    yield msg
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+        finally:
+            if queue in _video_sse_subscribers:
+                _video_sse_subscribers.remove(queue)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection":    "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.get("/api/video/download")
+async def download_video():
+    path = config.VIDEO_OUTPUT_FILE
+    if os.path.exists(path):
+        return FileResponse(
+            path, media_type="video/mp4",
+            filename="narrator_video.mp4",
+        )
+    return JSONResponse({"error": "No video file found"}, 404)
+
+
+@app.get("/api/video/config")
+async def get_video_config():
+    return {
+        "pexels_api_key":  config.PEXELS_API_KEY,
+        "pixabay_api_key": config.PIXABAY_API_KEY,
+        "coverr_api_key":  config.COVERR_API_KEY,
+        "gemini_api_key":  config.GEMINI_API_KEY,
+        "keyword_mode":    config.KEYWORD_MODE,
+        "resolution":      config.VIDEO_RESOLUTION,
+        "fps":             config.VIDEO_FPS,
+    }
+
+
+@app.post("/api/video/config")
+async def update_video_config(request: Request):
+    data = await request.json()
+    mapping = {
+        "pexels_api_key":  "PEXELS_API_KEY",
+        "pixabay_api_key": "PIXABAY_API_KEY",
+        "coverr_api_key":  "COVERR_API_KEY",
+        "gemini_api_key":  "GEMINI_API_KEY",
+        "keyword_mode":    "KEYWORD_MODE",
+        "resolution":      "VIDEO_RESOLUTION",
+        "fps":             "VIDEO_FPS",
+    }
+    for key, attr in mapping.items():
+        if key in data:
+            setattr(config, attr, data[key])
+    return {"ok": True}
+
+
+@app.post("/api/video/clear")
+async def clear_video_outputs():
+    if _video_state["running"]:
+        return JSONResponse({"ok": False, "error": "Video generation in progress"}, 409)
+
+    if os.path.exists(config.VIDEO_SEGMENTS_DIR):
+        shutil.rmtree(config.VIDEO_SEGMENTS_DIR)
+    if os.path.exists(config.VIDEO_OUTPUT_FILE):
+        os.remove(config.VIDEO_OUTPUT_FILE)
+
+    _video_state.update(
+        current_chunk=0, total_chunks=0, segments_done=[],
+        status="idle", message="", output_file=None,
+    )
+    _broadcast_video("progress", {
+        "running": False, "status": "idle", "message": "",
+        "current_chunk": 0, "total_chunks": 0, "segments_done": [],
+    })
     return {"ok": True}
 
 

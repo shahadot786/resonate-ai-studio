@@ -2,7 +2,7 @@
 // app.js — Narrator Dashboard Logic (v3 Premium Edition)
 // ============================================================
 
-const $ = (s) => document.querySelector(s);
+const $ = (s) => document.querySelector(s) || document.createElement('div');
 const $$ = (s) => document.querySelectorAll(s);
 
 // ── DOM ELEMENTS MAP ──
@@ -17,10 +17,13 @@ const DOM = {
     chunkCounter:     $('#chunk-counter'),
     wordCounter:      $('#word-counter'),
     btnSaveScript:    $('#btn-save-script'),
+    btnAnalyzeScript: $('#btn-analyze-script'),
+    btnPolishScript:  $('#btn-polish-script'),
     tagButtons:       $$('.tag-insert'),
 
     // Voice Preset
     selectVoice:      $('#select-voice'),
+    btnVoicePreview:  $('#btn-voice-preview'),
     sliderSpeed:      $('#slider-speed'),
     lblSpeed:         $('#lbl-speed'),
 
@@ -75,6 +78,28 @@ const DOM = {
 let activePlayingChunk = null;
 let sseSource = null;
 
+// ── PIPELINE MODE STATE ──
+// 'audio' | 'both' | 'video'
+let _pipelineMode = 'both';
+
+const MODE_CONFIG = {
+    audio: {
+        label:      '🎙 Audio Only',
+        hint:       'Generates narration audio only. No video will be created.',
+        badgeColor: '#7c9dff',
+    },
+    both: {
+        label:      '✨ Audio + Video',
+        hint:       'Generates audio then automatically creates B-Roll video.',
+        badgeColor: 'var(--accent)',
+    },
+    video: {
+        label:      '🎬 Video Only',
+        hint:       'Creates B-Roll video using the existing audio. Generate audio first.',
+        badgeColor: '#ff7c7c',
+    },
+};
+
 // Default reference transcripts map
 const REF_TRANSCRIPTS = {
     "ref_voice_male.wav": "The day Paul Reston shook my hand and called me the most talented analyst he'd ever worked with, I believed him.",
@@ -90,6 +115,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     await loadChunks();
     setupGutterSync();
     setupEventListeners();
+    setupModeSelector();
     connectSSE();
 });
 
@@ -147,6 +173,44 @@ function syncEmotionDropdown(text) {
     DOM.selectEmotion.value = '';
 }
 
+const KOKORO_VOICE_LABELS = {
+    // American Female
+    "af_sarah": "Sarah (US Female — Soft)",
+    "af_bella": "Bella (US Female — Expressive)",
+    "af_heart": "Heart (US Female — Warm)",
+    "af_nicole": "Nicole (US Female — Clear)",
+    "af_sky": "Sky (US Female — Bright)",
+    "af_alloy": "Alloy (US Female — Balanced)",
+    "af_aoede": "Aoede (US Female — Narrator)",
+    "af_jessica": "Jessica (US Female — Crisp)",
+    "af_kore": "Kore (US Female — Sweet)",
+    "af_nova": "Nova (US Female — Energetic)",
+    "af_river": "River (US Female — Calm)",
+    
+    // American Male
+    "am_adam": "Adam (US Male — Deep)",
+    "am_michael": "Michael (US Male — Natural)",
+    "am_fenrir": "Fenrir (US Male — Rich)",
+    "am_puck": "Puck (US Male — Lively)",
+    "am_echo": "Echo (US Male — Corporate)",
+    "am_eric": "Eric (US Male — Conversational)",
+    "am_liam": "Liam (US Male — Friendly)",
+    "am_onyx": "Onyx (US Male — Authority)",
+    "am_santa": "Santa (US Male — Festive)",
+    
+    // British Female
+    "bf_alice": "Alice (UK Female — Gentle)",
+    "bf_emma": "Emma (UK Female — Elegant)",
+    "bf_isabella": "Isabella (UK Female — Narrative)",
+    "bf_lily": "Lily (UK Female — Bright)",
+    
+    // British Male
+    "bm_daniel": "Daniel (UK Male — Warm)",
+    "bm_fable": "Fable (UK Male — Dramatic)",
+    "bm_george": "George (UK Male — Classic)",
+    "bm_lewis": "Lewis (UK Male — Conversational)"
+};
+
 async function loadVoices() {
     const voicesData = await apiFetch('/api/voices');
     const config = await apiFetch('/api/config');
@@ -156,7 +220,7 @@ async function loadVoices() {
     voicesData.voices.forEach(voice => {
         const opt = document.createElement('option');
         opt.value = voice;
-        opt.textContent = voice.charAt(0).toUpperCase() + voice.slice(1);
+        opt.textContent = KOKORO_VOICE_LABELS[voice] || (voice.charAt(0).toUpperCase() + voice.slice(1));
         if (config && voice === config.voice) opt.selected = true;
         DOM.selectVoice.appendChild(opt);
     });
@@ -206,21 +270,80 @@ async function loadScript() {
     }
 }
 
-async function saveScriptData() {
+async function saveScriptData(silent = false) {
+    DOM.btnSaveScript.textContent = 'Saving...';
     const data = await apiPost('/api/script', { text: DOM.editor.value });
     if (data && data.ok) {
-        showToast('Script saved successfully', 'ok');
+        DOM.btnSaveScript.textContent = 'Saved ✓';
         updateMetadataStats();
     } else {
-        showToast('Error saving script', 'err');
+        DOM.btnSaveScript.textContent = 'Save Failed ⚠️';
+        if (!silent) showToast('Error saving script', 'err');
+    }
+    setTimeout(() => {
+        DOM.btnSaveScript.textContent = '💾 Save Changes';
+    }, 1200);
+}
+
+async function analyzeScriptData() {
+    DOM.btnAnalyzeScript.disabled = true;
+    DOM.btnAnalyzeScript.textContent = '🔍 Analyzing...';
+    
+    try {
+        const data = await apiPost('/api/script/analyze', { text: DOM.editor.value });
+        if (data && data.ok) {
+            DOM.editor.value = data.text;
+            updateGutter();
+            updateMetadataStats();
+            const modeLabel = data.mode === 'ai' ? 'AI Director Mode' : 'Local Rules';
+            showToast(`Script auto-directed successfully (${modeLabel})`, 'ok');
+            saveScriptData(true);
+        } else {
+            showToast('Error analyzing script', 'err');
+        }
+    } catch (e) {
+        showToast('Error connecting to script analyzer', 'err');
+    } finally {
+        DOM.btnAnalyzeScript.disabled = false;
+        DOM.btnAnalyzeScript.textContent = '🎨 Auto-Direct Script';
     }
 }
 
+async function polishScriptData() {
+    DOM.btnPolishScript.disabled = true;
+    DOM.btnPolishScript.textContent = '✨ Polishing...';
+    
+    try {
+        const data = await apiPost('/api/script/polish', { text: DOM.editor.value });
+        if (data && data.ok) {
+            DOM.editor.value = data.text;
+            updateGutter();
+            updateMetadataStats();
+            const modeLabel = data.mode === 'ai' ? 'AI Polish Mode' : 'Local Rules';
+            showToast(`Script polished successfully (${modeLabel})`, 'ok');
+            saveScriptData(true);
+        } else {
+            showToast('Error polishing script', 'err');
+        }
+    } catch (e) {
+        showToast('Error connecting to script polish engine', 'err');
+    } finally {
+        DOM.btnPolishScript.disabled = false;
+        DOM.btnPolishScript.textContent = '✨ Polish Text';
+    }
+}
+
+let autoSaveTimeout = null;
 function setupGutterSync() {
     updateGutter();
     DOM.editor.addEventListener('input', () => {
         updateGutter();
         updateMetadataStats();
+        
+        clearTimeout(autoSaveTimeout);
+        autoSaveTimeout = setTimeout(() => {
+            saveScriptData(true);
+        }, 1500);
     });
     DOM.editor.addEventListener('scroll', () => {
         DOM.gutter.scrollTop = DOM.editor.scrollTop;
@@ -353,9 +476,17 @@ function updateProgressUI(data) {
 
     // Set high-end descriptive messages
     let descriptiveMsg = message;
-    if (status === 'loading') descriptiveMsg = "⚡ Booting Qwen3-TTS Engine & loading model weights...";
+    if (status === 'loading') descriptiveMsg = "⚡ Loading Kokoro ONNX Engine & model weights...";
     else if (status === 'stitching') descriptiveMsg = "🎛️ Merging acoustic segment outputs...";
-    else if (status === 'done') descriptiveMsg = "✅ Narration compilation completed successfully!";
+    else if (status === 'done') {
+        descriptiveMsg = _pipelineMode === 'audio'
+            ? "✅ Audio generation complete."
+            : "✅ Narration complete — starting B-Roll video…";
+        // Reload segment rows and reveal master player
+        loadChunks();
+        // Auto-kick the video pipeline right after audio finishes
+        setTimeout(autoStartVideoAfterAudio, 800);
+    }
     else if (status === 'error') descriptiveMsg = "⚠️ Generation pipeline halted due to an error.";
     else if (status === 'cancelled') descriptiveMsg = "🛑 Generation pipeline aborted by request.";
     
@@ -590,7 +721,21 @@ async function triggerAudioGeneration() {
     triggerSaveConfig();
     const data = await apiPost('/api/generate', { mode: 'batch' });
     if (data && !data.ok) {
-        showToast(data.error || 'Failed to initialize pipeline', 'err');
+        showToast(data.error || 'Failed to initialize audio pipeline', 'err');
+    }
+}
+
+async function triggerVideoGeneration() {
+    await startVideoGeneration();
+}
+
+async function triggerGeneration() {
+    if (_pipelineMode === 'audio') {
+        await triggerAudioGeneration();
+    } else if (_pipelineMode === 'video') {
+        await triggerVideoGeneration();
+    } else {
+        await triggerAudioGeneration();
     }
 }
 
@@ -600,11 +745,12 @@ async function abortGeneration() {
 }
 
 async function purgeProjectOutputs() {
-    if (!confirm('Are you sure you want to delete ALL generated clips and final narratives? This cannot be undone.')) {
+    if (!confirm('Are you sure you want to delete ALL generated audio clips and video? This cannot be undone.')) {
         return;
     }
     const data = await apiPost('/api/clear', {});
     if (data && data.ok) {
+        // ── Reset audio UI ──────────────────────────────────
         DOM.chunkSuite.classList.add('hidden');
         DOM.chunkRowsContainer.innerHTML = '';
         DOM.audioPlaybackPlayer.classList.add('hidden');
@@ -613,7 +759,29 @@ async function purgeProjectOutputs() {
         DOM.progressBarFill.style.width = '0%';
         DOM.statusStats.textContent = '';
         DOM.statusMsg.textContent = 'System Standby';
-        showToast('Project cleared successfully', 'ok');
+
+        // ── Reset video UI ──────────────────────────────────
+        const videoSection = document.getElementById('video-section');
+        if (videoSection) videoSection.classList.add('hidden');
+
+        const chipRow = document.getElementById('video-chip-row');
+        if (chipRow) chipRow.innerHTML = '';
+
+        const videoPlayer = document.getElementById('video-output-player');
+        if (videoPlayer) videoPlayer.classList.add('hidden');
+
+        const videoBar = document.getElementById('video-progress-bar');
+        if (videoBar) videoBar.style.width = '0%';
+
+        const videoMsg = document.getElementById('video-status-msg');
+        if (videoMsg) videoMsg.textContent = '';
+
+        const videoBadge = document.getElementById('video-seg-badge');
+        if (videoBadge) videoBadge.textContent = '0 / 0';
+
+        _videoRunning = false;
+
+        showToast('All outputs cleared', 'ok');
     }
 }
 
@@ -629,7 +797,9 @@ function showToast(message, type = '') {
 // ── EVENT ROUTERS & EVENT LISTENER MAPS ──
 function setupEventListeners() {
     // Save hotkey trigger
-    DOM.btnSaveScript.addEventListener('click', saveScriptData);
+    DOM.btnSaveScript.addEventListener('click', () => saveScriptData(false));
+    DOM.btnAnalyzeScript.addEventListener('click', analyzeScriptData);
+    DOM.btnPolishScript.addEventListener('click', polishScriptData);
     document.addEventListener('keydown', (e) => {
         if ((e.metaKey || e.ctrlKey) && e.key === 's') {
             e.preventDefault();
@@ -638,7 +808,29 @@ function setupEventListeners() {
     });
 
     // Auto config save routers
-    DOM.selectVoice.addEventListener('change', triggerSaveConfig);
+    DOM.selectVoice.addEventListener('change', () => {
+        DOM.audioRefNode.pause();
+        DOM.btnVoicePreview.textContent = '▶';
+        triggerSaveConfig();
+    });
+
+    DOM.btnVoicePreview.addEventListener('click', () => {
+        const voice = DOM.selectVoice.value;
+        if (!voice) return;
+        
+        if (!DOM.audioRefNode.paused && DOM.audioRefNode.src.includes(`/api/voices/preview/${voice}`)) {
+            DOM.audioRefNode.pause();
+            DOM.btnVoicePreview.textContent = '▶';
+        } else {
+            DOM.audioRefNode.src = `/api/voices/preview/${voice}`;
+            DOM.audioRefNode.play();
+            DOM.btnVoicePreview.textContent = '⏸';
+            
+            DOM.audioRefNode.onended = () => {
+                DOM.btnVoicePreview.textContent = '▶';
+            };
+        }
+    });
     DOM.sliderSpeed.addEventListener('input', () => {
         DOM.lblSpeed.textContent = DOM.sliderSpeed.value + 'x';
         triggerSaveConfig();
@@ -689,7 +881,7 @@ function setupEventListeners() {
     });
 
     // Main action routers
-    DOM.btnActionGenerate.addEventListener('click', triggerAudioGeneration);
+    DOM.btnActionGenerate.addEventListener('click', triggerGeneration);
     DOM.btnActionStop.addEventListener('click', abortGeneration);
     DOM.btnActionClear.addEventListener('click', purgeProjectOutputs);
 
@@ -706,4 +898,285 @@ function setupEventListeners() {
     
     // File upload zones setup
     setupReferenceVoiceActions();
+
+    // ── ASPECT RATIO SELECTOR ────────────────────────────────
+    setupAspectRatio();
+
+    // ── VIDEO AUTO-PIPELINE SETUP ────────────────────────────
+    setupVideoPipeline();
+}
+
+// ============================================================
+// ASPECT RATIO SELECTOR
+// ============================================================
+
+function setupAspectRatio() {
+    const grid = document.getElementById('aspect-ratio-grid');
+    if (!grid) return;
+
+    // Load current resolution from server and highlight active button
+    fetch('/api/video/config')
+        .then(r => r.json())
+        .then(cfg => {
+            if (cfg.resolution) setActiveAR(cfg.resolution);
+        })
+        .catch(() => {});
+
+    // Click handler — update active state and save to server
+    grid.querySelectorAll('.ar-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const res = btn.dataset.res;
+            setActiveAR(res);
+            // Persist to server
+            fetch('/api/video/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ resolution: res }),
+            }).catch(() => {});
+        });
+    });
+}
+
+function setActiveAR(resolution) {
+    document.querySelectorAll('.ar-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.res === resolution);
+    });
+}
+
+
+// ============================================================
+// B-ROLL VIDEO — Fully Automated Pipeline
+// Auto-starts when audio generation finishes.
+// Shows inline progress chips + final video player below audio.
+// ============================================================
+
+let _videoSSE       = null;
+let _videoRunning   = false;
+
+function setupVideoPipeline() {
+    connectVideoSSE();
+    // Restore state if server already has a done/running video
+    refreshVideoState();
+}
+
+// ── SSE connection ────────────────────────────────────────────
+
+function connectVideoSSE() {
+    if (_videoSSE) _videoSSE.close();
+    _videoSSE = new EventSource('/api/video/events');
+    _videoSSE.addEventListener('progress', e => {
+        handleVideoProgress(JSON.parse(e.data));
+    });
+    _videoSSE.onerror = () => setTimeout(connectVideoSSE, 3000);
+}
+
+async function refreshVideoState() {
+    try {
+        const st = await fetch('/api/video/status').then(r => r.json());
+        handleVideoProgress(st);
+        if (st.status === 'done' && st.output_file) revealVideoPlayer();
+    } catch(_) {}
+}
+
+// ── Called externally when audio generation finishes ─────────
+// Only auto-starts video when mode is 'both'.
+
+function autoStartVideoAfterAudio() {
+    if (_pipelineMode !== 'both') return;
+    if (_videoRunning) return;
+    startVideoGeneration();
+}
+
+// ── Start video generation ────────────────────────────────────
+
+async function startVideoGeneration() {
+    if (_videoRunning) return;
+
+    // Reset UI
+    const section = document.getElementById('video-section');
+    section.classList.remove('hidden');
+    document.getElementById('video-chip-row').innerHTML = '';
+    document.getElementById('video-output-player').classList.add('hidden');
+    document.getElementById('video-progress-bar').style.width = '0%';
+    document.getElementById('video-status-msg').textContent = 'Starting…';
+    document.getElementById('video-seg-badge').textContent = '0 / 0';
+
+    try {
+        const res  = await fetch('/api/video/create', { method: 'POST' });
+        const data = await res.json();
+        if (!data.ok) {
+            document.getElementById('video-status-msg').textContent =
+                '❌ ' + (data.error || 'Could not start video');
+        }
+    } catch(e) {
+        document.getElementById('video-status-msg').textContent = '❌ Request failed';
+    }
+}
+
+// ── Progress handler ──────────────────────────────────────────
+
+function handleVideoProgress(data) {
+    const { running, status, message, current_chunk, total_chunks, segments_done } = data;
+    _videoRunning = !!running;
+
+    // Show the section whenever there's activity
+    if (status && status !== 'idle') {
+        document.getElementById('video-section').classList.remove('hidden');
+    }
+
+    // Progress bar (purple)
+    const pct = total_chunks > 0 ? Math.round((current_chunk / total_chunks) * 100) : 0;
+    document.getElementById('video-progress-bar').style.width = pct + '%';
+
+    // Badge
+    if (total_chunks > 0) {
+        document.getElementById('video-seg-badge').textContent =
+            `${current_chunk} / ${total_chunks}`;
+    }
+
+    // Status label
+    const icons = { idle:'⚙', searching:'🔍', merging:'🎞', done:'✅', error:'❌', cancelled:'⛔' };
+    document.getElementById('video-status-msg').textContent =
+        (icons[status] || '⚙') + ' ' + (message || '');
+
+    // Render chips
+    if (segments_done && segments_done.length) {
+        segments_done.forEach(seg => renderChip(seg));
+    }
+
+    // Done — show video player
+    if (status === 'done') {
+        document.getElementById('video-progress-bar').style.width = '100%';
+        revealVideoPlayer();
+    }
+}
+
+// ── Segment chip ──────────────────────────────────────────────
+
+function renderChip(seg) {
+    const row = document.getElementById('video-chip-row');
+    const id  = `vchip-${seg.index}`;
+    let chip  = document.getElementById(id);
+
+    if (!chip) {
+        chip    = document.createElement('span');
+        chip.id = id;
+        row.appendChild(chip);
+    }
+
+    const typeEmoji = seg.type === 'video'  ? '🎬' :
+                      seg.type === 'image'  ? '🖼'  :
+                      seg.type === 'color'  ? '⬛'  :
+                      seg.type === 'cached' ? '♻'   : '⏳';
+
+    const cls = seg.ok === true  ? (seg.type === 'image' ? 'chip-image' : 'chip-done') :
+                seg.ok === false ? 'chip-error' : 'chip-working';
+
+    chip.className = `vchip ${cls}`;
+    chip.innerHTML = `<span class="vchip-dot"></span>${typeEmoji} #${seg.index + 1} ${escapeHtml(seg.keyword || '')}`;
+    chip.title     = `Source: ${seg.source || '?'} | ${seg.time || ''}`;
+}
+
+function escapeHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ── Reveal video player ───────────────────────────────────────
+
+function revealVideoPlayer() {
+    const player = document.getElementById('video-output-player');
+    const video  = document.getElementById('video-player-node');
+    player.classList.remove('hidden');
+    video.src = '/api/video/download?t=' + Date.now();
+    video.load();
+    // Scroll to it
+    player.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+// ============================================================
+// PIPELINE MODE SELECTOR
+// Controls which pipeline stages run when Generate is clicked.
+// ============================================================
+
+function setupModeSelector() {
+    const buttons = document.querySelectorAll('.mode-btn');
+    if (!buttons.length) return;
+
+    // Restore from sessionStorage if available
+    const saved = sessionStorage.getItem('narratorMode');
+    if (saved && MODE_CONFIG[saved]) applyMode(saved, false);
+    else applyMode('both', false);
+
+    buttons.forEach(btn => {
+        btn.addEventListener('click', () => {
+            const mode = btn.dataset.mode;
+            applyMode(mode, true);
+        });
+    });
+}
+
+function applyMode(mode, save = true) {
+    if (!MODE_CONFIG[mode]) return;
+    _pipelineMode = mode;
+    if (save) sessionStorage.setItem('narratorMode', mode);
+
+    const cfg = MODE_CONFIG[mode];
+
+    // Update pill buttons
+    document.querySelectorAll('.mode-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.mode === mode);
+    });
+
+    // Update hint text
+    const hint = document.getElementById('mode-hint');
+    if (hint) hint.textContent = cfg.hint;
+
+    // Update the bottom-console mode badge
+    const badge = document.getElementById('current-mode-badge');
+    if (badge) {
+        badge.textContent = cfg.label;
+        badge.style.borderColor   = cfg.badgeColor;
+        badge.style.color         = cfg.badgeColor;
+        badge.style.background    = cfg.badgeColor.startsWith('#')
+            ? cfg.badgeColor + '1a'
+            : 'rgba(0,255,136,0.1)';
+    }
+
+    // Show / hide sidebar cards based on mode
+    const cardVoice   = document.getElementById('card-voice-settings');
+    const cardCloning = document.getElementById('card-voice-cloning');
+    const cardEmotion = document.getElementById('card-emotion');
+    const cardAudio   = document.getElementById('card-audio-pipeline');
+    const cardVideo   = document.getElementById('card-video-output');
+
+    if (mode === 'video') {
+        // Video only — audio cards not needed
+        if (cardVoice)   cardVoice.style.display   = 'none';
+        if (cardCloning) cardCloning.style.display = 'none';
+        if (cardEmotion) cardEmotion.style.display = 'none';
+        if (cardAudio)   cardAudio.style.display   = 'none';
+        if (cardVideo)   cardVideo.style.display   = '';
+    } else if (mode === 'audio') {
+        // Audio only — video output card hidden
+        if (cardVoice)   cardVoice.style.display   = '';
+        if (cardCloning) cardCloning.style.display = '';
+        if (cardEmotion) cardEmotion.style.display = '';
+        if (cardAudio)   cardAudio.style.display   = '';
+        if (cardVideo)   cardVideo.style.display   = 'none';
+    } else {
+        // Both — show everything
+        if (cardVoice)   cardVoice.style.display   = '';
+        if (cardCloning) cardCloning.style.display = '';
+        if (cardEmotion) cardEmotion.style.display = '';
+        if (cardAudio)   cardAudio.style.display   = '';
+        if (cardVideo)   cardVideo.style.display   = '';
+    }
+
+    // Update generate button label
+    const btnGen = document.getElementById('btn-action-generate');
+    if (btnGen) {
+        if (mode === 'audio')       btnGen.textContent = '⚡ Generate Audio';
+        else if (mode === 'video')  btnGen.textContent = '🎬 Generate Video';
+        else                        btnGen.textContent = '⚡ Run Generation';
+    }
 }
