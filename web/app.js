@@ -17,8 +17,6 @@ const DOM = {
     chunkCounter:     $('#chunk-counter'),
     wordCounter:      $('#word-counter'),
     btnSaveScript:    $('#btn-save-script'),
-    btnAnalyzeScript: $('#btn-analyze-script'),
-    btnPolishScript:  $('#btn-polish-script'),
     tagButtons:       $$('.tag-insert'),
 
     // Voice Preset
@@ -486,6 +484,8 @@ function updateProgressUI(data) {
         loadChunks();
         // Auto-kick the video pipeline right after audio finishes
         setTimeout(autoStartVideoAfterAudio, 800);
+        // Refresh history to show the new archived entry
+        setTimeout(loadHistory, 1500);
     }
     else if (status === 'error') descriptiveMsg = "⚠️ Generation pipeline halted due to an error.";
     else if (status === 'cancelled') descriptiveMsg = "🛑 Generation pipeline aborted by request.";
@@ -758,7 +758,7 @@ async function purgeProjectOutputs() {
         DOM.btnDownloadMp3.classList.add('hidden');
         DOM.progressBarFill.style.width = '0%';
         DOM.statusStats.textContent = '';
-        DOM.statusMsg.textContent = 'System Standby';
+        DOM.statusMsg.textContent = 'System Idle'; // updated from 'System Standby'
 
         // ── Reset video UI ──────────────────────────────────
         const videoSection = document.getElementById('video-section');
@@ -782,6 +782,8 @@ async function purgeProjectOutputs() {
         _videoRunning = false;
 
         showToast('All outputs cleared', 'ok');
+    } else {
+        showToast((data && data.error) ? data.error : 'Failed to clear outputs', 'err');
     }
 }
 
@@ -798,8 +800,6 @@ function showToast(message, type = '') {
 function setupEventListeners() {
     // Save hotkey trigger
     DOM.btnSaveScript.addEventListener('click', () => saveScriptData(false));
-    DOM.btnAnalyzeScript.addEventListener('click', analyzeScriptData);
-    DOM.btnPolishScript.addEventListener('click', polishScriptData);
     document.addEventListener('keydown', (e) => {
         if ((e.metaKey || e.ctrlKey) && e.key === 's') {
             e.preventDefault();
@@ -1179,4 +1179,655 @@ function applyMode(mode, save = true) {
         else if (mode === 'video')  btnGen.textContent = '🎬 Generate Video';
         else                        btnGen.textContent = '⚡ Run Generation';
     }
+}
+
+
+// ============================================================
+// VOICE PICKER MODAL
+// Browses all voices with search + category filter + preview
+// ============================================================
+
+const VOICE_PICKER_DATA = [
+    // US Female
+    { id: 'af_sarah',    name: 'Sarah',    desc: 'Soft, intimate tone. Best for confessional narratives.',     tag: 'US Female', cat: 'us-f', avatar: '👩' },
+    { id: 'af_bella',    name: 'Bella',    desc: 'Expressive with emotional range. Great for drama.',          tag: 'US Female', cat: 'us-f', avatar: '👩‍🦰' },
+    { id: 'af_heart',    name: 'Heart',    desc: 'Warm and nurturing. Ideal for personal stories.',            tag: 'US Female', cat: 'us-f', avatar: '👩‍🦱' },
+    { id: 'af_nicole',   name: 'Nicole',   desc: 'Clear and articulate. Works for corporate or clear narr.', tag: 'US Female', cat: 'us-f', avatar: '👩' },
+    { id: 'af_sky',      name: 'Sky',      desc: 'Bright and energetic. Upbeat storytelling.',                 tag: 'US Female', cat: 'us-f', avatar: '👩‍🦳' },
+    { id: 'af_alloy',    name: 'Alloy',    desc: 'Balanced and versatile. All-purpose narrator.',              tag: 'US Female', cat: 'us-f', avatar: '👩' },
+    { id: 'af_aoede',    name: 'Aoede',    desc: 'Strong narrator voice. Ideal for long-form content.',       tag: 'US Female', cat: 'us-f', avatar: '🧕' },
+    { id: 'af_jessica',  name: 'Jessica',  desc: 'Crisp and professional. News-style delivery.',               tag: 'US Female', cat: 'us-f', avatar: '👩‍💼' },
+    { id: 'af_kore',     name: 'Kore',     desc: 'Sweet and approachable. Gentle pacing.',                     tag: 'US Female', cat: 'us-f', avatar: '👧' },
+    { id: 'af_nova',     name: 'Nova',     desc: 'Energetic and punchy. Fast-paced narratives.',               tag: 'US Female', cat: 'us-f', avatar: '👩‍🚀' },
+    { id: 'af_river',    name: 'River',    desc: 'Calm and measured. Meditative storytelling.',                tag: 'US Female', cat: 'us-f', avatar: '🧘‍♀️' },
+    // US Male
+    { id: 'am_adam',     name: 'Adam',     desc: 'Deep, authoritative. Cinematic presence.',                   tag: 'US Male',   cat: 'us-m', avatar: '👨' },
+    { id: 'am_michael',  name: 'Michael',  desc: 'Natural and warm. Conversational and trustworthy.',          tag: 'US Male',   cat: 'us-m', avatar: '👨‍🦱' },
+    { id: 'am_fenrir',   name: 'Fenrir',   desc: 'Rich and resonant. Epic narration.',                         tag: 'US Male',   cat: 'us-m', avatar: '🧔' },
+    { id: 'am_puck',     name: 'Puck',     desc: 'Lively and playful. Energetic delivery.',                    tag: 'US Male',   cat: 'us-m', avatar: '🤵' },
+    { id: 'am_echo',     name: 'Echo',     desc: 'Corporate and clean. Professional tone.',                     tag: 'US Male',   cat: 'us-m', avatar: '👨‍💼' },
+    { id: 'am_eric',     name: 'Eric',     desc: 'Conversational and relaxed. Everyday storytelling.',         tag: 'US Male',   cat: 'us-m', avatar: '🧑' },
+    { id: 'am_liam',     name: 'Liam',     desc: 'Friendly and approachable. Modern narrator.',                tag: 'US Male',   cat: 'us-m', avatar: '👦' },
+    { id: 'am_onyx',     name: 'Onyx',     desc: 'Commanding authority. Deep and powerful.',                   tag: 'US Male',   cat: 'us-m', avatar: '🦸‍♂️' },
+    { id: 'am_santa',    name: 'Santa',    desc: 'Warm and jolly. Festive or grandfatherly.',                  tag: 'US Male',   cat: 'us-m', avatar: '🎅' },
+    // UK Female
+    { id: 'bf_alice',    name: 'Alice',    desc: 'Gentle British accent. Soft and refined.',                   tag: 'UK Female', cat: 'uk-f', avatar: '👩‍🎓' },
+    { id: 'bf_emma',     name: 'Emma',     desc: 'Elegant and polished. Classic British narrator.',            tag: 'UK Female', cat: 'uk-f', avatar: '👸' },
+    { id: 'bf_isabella', name: 'Isabella', desc: 'Narrative-first. Ideal for long stories.',                  tag: 'UK Female', cat: 'uk-f', avatar: '👩‍🏫' },
+    { id: 'bf_lily',     name: 'Lily',     desc: 'Bright and cheerful. Uplifting tone.',                       tag: 'UK Female', cat: 'uk-f', avatar: '🌸' },
+    // UK Male
+    { id: 'bm_daniel',   name: 'Daniel',   desc: 'Warm British male. Trusted and engaging.',                   tag: 'UK Male',   cat: 'uk-m', avatar: '👨‍🏫' },
+    { id: 'bm_fable',    name: 'Fable',    desc: 'Dramatic and theatrical. Storytelling flair.',               tag: 'UK Male',   cat: 'uk-m', avatar: '🎭' },
+    { id: 'bm_george',   name: 'George',   desc: 'Classic British gravitas. Authoritative.',                   tag: 'UK Male',   cat: 'uk-m', avatar: '👴' },
+    { id: 'bm_lewis',    name: 'Lewis',    desc: 'Conversational British. Natural and modern.',                tag: 'UK Male',   cat: 'uk-m', avatar: '🧑‍💻' },
+];
+
+function initVoicePickerModal() {
+    const modal    = document.getElementById('voice-picker-modal');
+    const closeBtn = document.getElementById('voice-picker-close');
+    const openBtn  = document.getElementById('btn-open-voice-picker');
+    const grid     = document.getElementById('voice-picker-grid');
+    const search   = document.getElementById('voice-picker-search');
+    const pills    = document.querySelectorAll('.vpill');
+
+    if (!modal || !openBtn) return;
+
+    let activeFilter = 'all';
+
+    // Build grid of cards
+    function buildGrid() {
+        grid.innerHTML = '';
+        const currentVoice = DOM.selectVoice.value;
+        VOICE_PICKER_DATA.forEach(v => {
+            const card = document.createElement('div');
+            card.className = `vpc-card${v.id === currentVoice ? ' active' : ''}`;
+            card.dataset.voiceId  = v.id;
+            card.dataset.voiceCat = v.cat;
+            const isUK   = v.cat.startsWith('uk');
+            const isMale = v.cat.endsWith('m');
+            const tagClass = [isUK ? 'uk' : '', isMale ? 'male' : ''].filter(Boolean).join(' ');
+            card.innerHTML = `
+                <div class="vpc-avatar">${v.avatar}</div>
+                <button class="vpc-preview-btn" data-vid="${v.id}" title="Preview ${v.name}">▶</button>
+                <div class="vpc-name">${v.name}</div>
+                <div class="vpc-desc">${v.desc}</div>
+                <span class="vpc-tag ${tagClass}">${v.tag}</span>
+            `;
+            // Select voice on card click
+            card.addEventListener('click', (e) => {
+                if (e.target.classList.contains('vpc-preview-btn')) return;
+                DOM.selectVoice.value = v.id;
+                triggerSaveConfig();
+                // Highlight active
+                document.querySelectorAll('.vpc-card').forEach(c => c.classList.remove('active'));
+                card.classList.add('active');
+                // Also update the DOM select value
+                DOM.selectVoice.dispatchEvent(new Event('change'));
+                showToast(`Voice set to ${v.name}`, 'ok');
+            });
+            // Preview button
+            card.querySelector('.vpc-preview-btn').addEventListener('click', (e) => {
+                e.stopPropagation();
+                const prevBtn = e.currentTarget;
+                // Stop any playing ref
+                DOM.audioRefNode.pause();
+                DOM.audioRefNode.src = `/api/voices/preview/${v.id}`;
+                DOM.audioRefNode.play();
+                prevBtn.textContent = '⏸';
+                DOM.audioRefNode.onended = () => { prevBtn.textContent = '▶'; };
+            });
+            grid.appendChild(card);
+        });
+    }
+
+    // Filter visibility
+    function applyFilter() {
+        const q = (search.value || '').toLowerCase();
+        document.querySelectorAll('.vpc-card').forEach(card => {
+            const cat    = card.dataset.voiceCat;
+            const vid    = card.dataset.voiceId;
+            const vdata  = VOICE_PICKER_DATA.find(v => v.id === vid);
+            const matchQ = !q || vdata.name.toLowerCase().includes(q) || vdata.desc.toLowerCase().includes(q) || vdata.tag.toLowerCase().includes(q);
+            const matchF = activeFilter === 'all' || cat === activeFilter;
+            card.classList.toggle('hidden', !(matchQ && matchF));
+        });
+    }
+
+    openBtn.addEventListener('click', () => {
+        buildGrid();
+        applyFilter();
+        modal.classList.remove('hidden');
+    });
+
+    closeBtn.addEventListener('click', () => modal.classList.add('hidden'));
+    modal.addEventListener('click', (e) => { if (e.target === modal) modal.classList.add('hidden'); });
+
+    search.addEventListener('input', applyFilter);
+
+    pills.forEach(pill => {
+        pill.addEventListener('click', () => {
+            activeFilter = pill.dataset.filter;
+            pills.forEach(p => p.classList.remove('active'));
+            pill.classList.add('active');
+            applyFilter();
+        });
+    });
+}
+
+
+// ============================================================
+// VOICE SUGGESTION MODAL — AI Advisor
+// Analyzes a short script summary and recommends voice, emotion,
+// speed, and tone prompt settings for the sidebar.
+// Uses smart local keyword analysis (no extra server call needed).
+// ============================================================
+
+// Internal suggestion engine — pure JS logic
+function analyzeScriptSummaryForVoice(summaryText) {
+    const t = summaryText.toLowerCase();
+
+    // ── Voice recommendation ──────────────────────────────────
+    let voice = 'af_heart'; // safe default: warm female
+    let voiceReason = 'Warm, intimate tone ideal for personal first-person storytelling.';
+
+    // Female detection keywords
+    const isFemaleChar = /\b(she|her|woman|female|girl|lady|maya|lisa|sarah|anna|emma|jessica)\b/.test(t);
+    const isMaleChar   = /\b(he|him|man|male|guy|narrator|paul|adam|john|mike|david|james)\b/.test(t);
+    const isEpic       = /\b(epic|powerful|commanding|authoritative|deep|strong|bold)\b/.test(t);
+    const isSoft       = /\b(gentle|soft|quiet|intimate|warm|confess|personal|vulnerable|whisper)\b/.test(t);
+    const isCinematic  = /\b(cinematic|dramatic|film|movie|thriller|suspense|tension|buildup)\b/.test(t);
+    const isUK         = /\b(british|uk|england|london|accent)\b/.test(t);
+    const isConf       = /\b(confession|confessional|betrayal|trust|hurt|wound|pain|cry)\b/.test(t);
+
+    if (isUK && isFemaleChar) {
+        voice = 'bf_emma'; voiceReason = 'British English elegance fits formal or classic storytelling tone.';
+    } else if (isUK) {
+        voice = 'bm_fable'; voiceReason = 'UK dramatic male voice adds theatrical gravitas.';
+    } else if (isEpic && !isFemaleChar) {
+        voice = 'am_onyx'; voiceReason = 'Deep commanding authority — perfect for powerful, bold narration.';
+    } else if (isCinematic && isFemaleChar) {
+        voice = 'af_aoede'; voiceReason = 'Strong female narrator voice built for cinematic long-form content.';
+    } else if (isCinematic) {
+        voice = 'am_adam'; voiceReason = 'Rich cinematic depth — the signature "documentary narrator" sound.';
+    } else if ((isConf || isSoft) && isFemaleChar) {
+        voice = 'af_heart'; voiceReason = 'Warm and intimate — best for personal confessional delivery.';
+    } else if (isConf && !isFemaleChar) {
+        voice = 'am_michael'; voiceReason = 'Natural, trusted voice — relatable and emotionally grounded.';
+    } else if (isSoft && !isFemaleChar) {
+        voice = 'am_eric'; voiceReason = 'Conversational and relaxed — feels like a real conversation.';
+    } else if (isFemaleChar) {
+        voice = 'af_bella'; voiceReason = 'Expressive with good emotional range for dramatic narration.';
+    } else if (isMaleChar) {
+        voice = 'am_michael'; voiceReason = 'Natural and warm — versatile for most narrative styles.';
+    }
+
+    // ── Emotion preset recommendation ─────────────────────────
+    let emotion = '';
+    let emotionLabel = 'Custom';
+    let emotionReason = '';
+
+    if (/\b(cinematic|film|documentary|story|narrative)\b/.test(t)) {
+        emotion = "Deep, serious, and emotionally controlled. Speak slowly with gravitas and natural pauses. Begin calm and reflective, gradually build tension, express genuine hurt without melodrama, become intense during betrayal scenes, then finish with quiet confidence and emotional resolution.";
+        emotionLabel = '🎭 Cinematic Narrator';
+        emotionReason = 'Classic cinematic narrator delivery — controlled, gravitas-filled, and emotionally precise.';
+    } else if (/\b(confess|confession|personal|friend|intimate|late night)\b/.test(t)) {
+        emotion = "Warm, intimate, and conversational. Speak as if confiding in a close friend late at night. Natural pace with soft emphasis on emotional words. Gentle but honest.";
+        emotionLabel = '💬 Intimate Confessional';
+        emotionReason = 'Confessional tone feels real and vulnerable — pulls listeners in closely.';
+    } else if (/\b(cold|detach|clinical|fact|precision|flat|emotionless)\b/.test(t)) {
+        emotion = "Cold, detached, and matter-of-fact. Deliver with clinical precision, no emotional coloring. The flatness itself conveys the weight of what happened.";
+        emotionLabel = '🧊 Cold & Detached';
+        emotionReason = 'Cold precision can be more powerful than overt emotion for some betrayal stories.';
+    } else if (/\b(betray|discover|shock|truth|reveal|stun)\b/.test(t)) {
+        emotion = "Start calm and trusting, then let disbelief creep in. Build to a moment of stunned silence. Let the hurt land quietly, not loudly. End with a hollow, empty resolve.";
+        emotionLabel = '💔 Betrayal Discovery';
+        emotionReason = 'Calibrated for shock and quiet devastation — the hallmark of a betrayal arc.';
+    } else if (/\b(anger|rage|simmering|furious|bitter|resentment)\b/.test(t)) {
+        emotion = "Controlled anger simmering beneath every word. Speak with precision and restraint. Each sentence is measured, deliberate. The quietness is more terrifying than shouting.";
+        emotionLabel = '😤 Controlled Rage';
+        emotionReason = 'Restrained anger is more menacing and cinematic than explosive rage.';
+    } else if (/\b(suspense|tense|thriller|mystery|secret|reveal)\b/.test(t)) {
+        emotion = "Slow, deliberate, and suspenseful. Long pauses between key phrases. Build tension with pacing alone. Let the listener lean in.";
+        emotionLabel = '⏳ Slow Burn Suspense';
+        emotionReason = 'Pacing and silence create suspense naturally — ideal for mystery reveals.';
+    } else if (/\b(resolv|fight back|determin|confident|empow|justice|win)\b/.test(t)) {
+        emotion = "Authoritative and confident. Speak with the certainty of someone who has survived. Strong, grounded, and empowered. The voice of hard-won wisdom.";
+        emotionLabel = '👑 Empowered Resolution';
+        emotionReason = 'Conveys the confidence of a protagonist who has overcome — the satisfying payoff.';
+    } else if (/\b(nostalgic|memory|remember|past|flashback|wistful)\b/.test(t)) {
+        emotion = "Nostalgic and wistful. Speak as if recalling a distant memory. Bittersweet warmth mixed with longing. Gentle, slightly faded.";
+        emotionLabel = '🌅 Nostalgic Flashback';
+        emotionReason = 'Memory sequences need warmth with a hint of sadness — this delivers both.';
+    } else {
+        // Default cinematic
+        emotion = "Deep, serious, and emotionally controlled. Speak slowly with gravitas and natural pauses. Begin calm and reflective, gradually build tension, express genuine hurt without melodrama, become intense during betrayal scenes, then finish with quiet confidence and emotional resolution.";
+        emotionLabel = '🎭 Cinematic Narrator';
+        emotionReason = 'Default cinematic preset — an all-purpose choice for dramatic narratives.';
+    }
+
+    // ── Speed recommendation ──────────────────────────────────
+    let speed = 0.9;
+    let speedReason = 'Slightly slower than default — allows emotional weight to land properly.';
+
+    if (/\b(urgent|fast|quick|intense|energetic|punchy|breathless)\b/.test(t)) {
+        speed = 1.1; speedReason = 'Faster pace matches the urgency and energy of the scene.';
+    } else if (/\b(slow|deliberate|meditat|calm|reflective|pause|suspense|whisper)\b/.test(t)) {
+        speed = 0.85; speedReason = 'Slower delivery lets pauses breathe and tension build naturally.';
+    } else if (/\b(confession|intimate|personal|vulnerable|raw)\b/.test(t)) {
+        speed = 0.9; speedReason = 'Measured pace feels authentic for personal confessional narration.';
+    } else if (/\b(cinematic|narrat|story|film)\b/.test(t)) {
+        speed = 0.95; speedReason = 'Near-natural speed keeps the cinematic flow smooth and grounded.';
+    }
+
+    // ── Tone prompt (emotion textarea) ──────────────────────
+    const tonePrompt = emotion;
+
+    return {
+        voice,
+        voiceData: VOICE_PICKER_DATA.find(v => v.id === voice),
+        voiceReason,
+        emotionLabel,
+        emotionPreset: emotion,
+        emotionReason,
+        speed,
+        speedReason,
+        tonePrompt,
+    };
+}
+
+let _lastSuggestion = null;
+
+function initVoiceSuggestModal() {
+    const modal      = document.getElementById('voice-suggest-modal');
+    const closeBtn   = document.getElementById('voice-suggest-close');
+    const openBtn    = document.getElementById('btn-open-suggest');
+    const runBtn     = document.getElementById('btn-run-suggestion');
+    const applyBtn   = document.getElementById('btn-apply-suggestion');
+    const againBtn   = document.getElementById('btn-suggest-again');
+    const inputTA    = document.getElementById('suggest-summary-input');
+    const resultsDiv = document.getElementById('suggest-results');
+    const cardsDiv   = document.getElementById('suggest-cards-container');
+
+    if (!modal || !openBtn) return;
+
+    openBtn.addEventListener('click', () => {
+        modal.classList.remove('hidden');
+        resultsDiv.classList.add('hidden');
+        inputTA.focus();
+    });
+    closeBtn.addEventListener('click', () => modal.classList.add('hidden'));
+    modal.addEventListener('click', (e) => { if (e.target === modal) modal.classList.add('hidden'); });
+
+    runBtn.addEventListener('click', async () => {
+        const summary = inputTA.value.trim();
+        if (!summary) {
+            inputTA.focus();
+            inputTA.style.borderColor = 'var(--danger)';
+            setTimeout(() => inputTA.style.borderColor = '', 1200);
+            return;
+        }
+
+        // Show loading state
+        runBtn.classList.add('loading');
+        runBtn.disabled = true;
+        document.getElementById('suggest-btn-label').textContent = 'Analyzing…';
+        resultsDiv.classList.add('hidden');
+
+        // Small artificial delay for UX polish
+        await new Promise(r => setTimeout(r, 800));
+
+        const suggestion = analyzeScriptSummaryForVoice(summary);
+        _lastSuggestion = suggestion;
+
+        // Render result cards
+        const vd = suggestion.voiceData || { name: suggestion.voice, avatar: '🎙', tag: '—' };
+        cardsDiv.innerHTML = `
+            <div class="suggest-card">
+                <div class="suggest-card-icon">${vd.avatar || '🎙'}</div>
+                <div class="suggest-card-body">
+                    <div class="suggest-card-label">Recommended Voice</div>
+                    <div class="suggest-card-value">${vd.name} <span style="font-size:0.68rem;color:var(--text-muted);font-weight:500;">(${suggestion.voice})</span></div>
+                    <div class="suggest-card-reason">${suggestion.voiceReason}</div>
+                </div>
+            </div>
+            <div class="suggest-card emotion-card">
+                <div class="suggest-card-icon">🎭</div>
+                <div class="suggest-card-body">
+                    <div class="suggest-card-label">Emotion Preset</div>
+                    <div class="suggest-card-value">${suggestion.emotionLabel}</div>
+                    <div class="suggest-card-reason">${suggestion.emotionReason}</div>
+                </div>
+            </div>
+            <div class="suggest-card speed-card">
+                <div class="suggest-card-icon">⏱</div>
+                <div class="suggest-card-body">
+                    <div class="suggest-card-label">Narration Speed</div>
+                    <div class="suggest-card-value">${suggestion.speed}×</div>
+                    <div class="suggest-card-reason">${suggestion.speedReason}</div>
+                </div>
+            </div>
+            <div class="suggest-card" style="border-color:rgba(163,163,163,0.15);">
+                <div class="suggest-card-icon">📝</div>
+                <div class="suggest-card-body">
+                    <div class="suggest-card-label">Tone Prompt Preview</div>
+                    <div class="suggest-card-reason" style="font-style:italic;color:var(--text-grey);">"${suggestion.tonePrompt.slice(0, 140)}…"</div>
+                </div>
+            </div>
+        `;
+
+        resultsDiv.classList.remove('hidden');
+
+        // Reset button
+        runBtn.classList.remove('loading');
+        runBtn.disabled = false;
+        document.getElementById('suggest-btn-label').textContent = '🤖 Generate Suggestions';
+    });
+
+    applyBtn.addEventListener('click', () => {
+        if (!_lastSuggestion) return;
+
+        // Apply voice
+        DOM.selectVoice.value = _lastSuggestion.voice;
+        DOM.selectVoice.dispatchEvent(new Event('change'));
+
+        // Apply speed
+        DOM.sliderSpeed.value = _lastSuggestion.speed;
+        DOM.lblSpeed.textContent = _lastSuggestion.speed + 'x';
+
+        // Apply emotion
+        DOM.txtEmotion.value = _lastSuggestion.emotionPreset;
+        syncEmotionDropdown(_lastSuggestion.emotionPreset);
+
+        // Persist to server
+        triggerSaveConfig();
+
+        showToast(`Settings applied: ${_lastSuggestion.voiceData?.name || _lastSuggestion.voice} — ${_lastSuggestion.emotionLabel}`, 'ok');
+        modal.classList.add('hidden');
+    });
+
+    againBtn.addEventListener('click', () => {
+        resultsDiv.classList.add('hidden');
+        inputTA.focus();
+        inputTA.select();
+    });
+}
+
+// ── Bootstrap both modals after DOM is ready ─────────────────
+document.addEventListener('DOMContentLoaded', () => {
+    initVoicePickerModal();
+    initVoiceSuggestModal();
+    initHistoryDrawer();
+});
+
+
+// ============================================================
+// GENERATION HISTORY DRAWER
+// Loads every archived generation from /api/history and renders
+// a rich card list with: inline audio player, tags, rename,
+// download (WAV / video), and individual delete.
+// ============================================================
+
+let _historyEntries    = [];   // full list from server
+let _historyAudioEl    = null; // single shared <audio> for history playback
+let _historyPlayingId  = null; // currently playing entry id
+
+function _historyFmt(secs) {
+    if (!secs) return '0:00';
+    const m = Math.floor(secs / 60);
+    const s = Math.floor(secs % 60);
+    return `${m}:${s.toString().padStart(2,'0')}`;
+}
+
+function _historyFormatDate(iso) {
+    try {
+        const d = new Date(iso);
+        return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) +
+               ' ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+    } catch(_) { return iso || ''; }
+}
+
+function _historyFormatBytes(b) {
+    if (!b) return '';
+    if (b < 1024 * 1024) return `${(b/1024).toFixed(0)} KB`;
+    return `${(b/1024/1024).toFixed(1)} MB`;
+}
+
+async function loadHistory() {
+    const data = await apiFetch('/api/history');
+    if (!data) return;
+    _historyEntries = data.entries || [];
+    renderHistoryEntries(_historyEntries);
+    // Update toolbar badge
+    const badge = document.getElementById('history-count-badge');
+    if (badge) badge.textContent = _historyEntries.length > 0 ? _historyEntries.length : '';
+}
+
+function renderHistoryEntries(entries) {
+    const list    = document.getElementById('history-list');
+    const empty   = document.getElementById('history-empty');
+    if (!list) return;
+
+    list.innerHTML = '';
+
+    if (!entries || entries.length === 0) {
+        if (empty) empty.classList.remove('hidden');
+        return;
+    }
+    if (empty) empty.classList.add('hidden');
+
+    entries.forEach(entry => {
+        const card = buildHistoryCard(entry);
+        list.appendChild(card);
+    });
+}
+
+function buildHistoryCard(entry) {
+    const wrap = document.createElement('div');
+    wrap.className = `history-entry${entry.has_video ? ' has-video' : ''}`;
+    wrap.dataset.entryId = entry.id;
+
+    const voiceLabel = KOKORO_VOICE_LABELS[entry.voice] || entry.voice || '—';
+    const speedLabel = entry.speed ? `${entry.speed}x` : '1.0x';
+    const dateLabel  = _historyFormatDate(entry.created);
+    const audioSize  = _historyFormatBytes(entry.audio_size);
+
+    wrap.innerHTML = `
+        <div class="history-entry-top">
+            <div class="history-entry-row1">
+                <input class="history-title-edit" type="text" value="${escapeHtml(entry.title || entry.id)}" title="Click to rename">
+                <button class="history-entry-del-btn" title="Delete this generation">🗑</button>
+            </div>
+            <div class="history-entry-meta">
+                <span class="hist-tag voice">🎙 ${voiceLabel.split(' (')[0]}</span>
+                <span class="hist-tag speed">⏱ ${speedLabel}</span>
+                ${entry.duration ? `<span class="hist-tag dur">⏳ ${entry.duration}</span>` : ''}
+                ${audioSize ? `<span class="hist-tag dur">${audioSize}</span>` : ''}
+                ${entry.has_video ? `<span class="hist-tag video-tag">🎬 +Video</span>` : ''}
+                <span class="hist-tag date-tag">${dateLabel}</span>
+            </div>
+            <div class="history-mini-player">
+                <button class="hist-play-btn" data-entry-id="${entry.id}">▶</button>
+                <div class="hist-progress-track" data-entry-id="${entry.id}">
+                    <div class="hist-progress-fill" id="hist-fill-${entry.id}"></div>
+                </div>
+                <span class="hist-time-label" id="hist-time-${entry.id}">0:00</span>
+            </div>
+        </div>
+        <div class="history-entry-actions">
+            <a class="hist-dl-btn" href="/api/history/${entry.id}/audio?fmt=wav" download="${entry.id}.wav" title="Download WAV">⬇ WAV</a>
+            ${entry.has_video ? `<a class="hist-dl-btn video-dl" href="/api/history/${entry.id}/video" download="${entry.id}.mp4" title="Download MP4">🎬 MP4</a>` : ''}
+        </div>
+    `;
+
+    // ── Play / pause button ──────────────────────────────────
+    const playBtn  = wrap.querySelector('.hist-play-btn');
+    const fill     = wrap.querySelector('.hist-progress-fill');
+    const timeEl   = wrap.querySelector('.hist-time-label');
+    const track    = wrap.querySelector('.hist-progress-track');
+
+    playBtn.addEventListener('click', () => {
+        if (!_historyAudioEl) {
+            _historyAudioEl = document.createElement('audio');
+            _historyAudioEl.preload = 'none';
+            document.body.appendChild(_historyAudioEl);
+        }
+
+        // If already playing this one → pause it
+        if (_historyPlayingId === entry.id && !_historyAudioEl.paused) {
+            _historyAudioEl.pause();
+            playBtn.textContent = '▶';
+            playBtn.classList.remove('playing');
+            return;
+        }
+
+        // Stop current if different entry
+        if (_historyPlayingId && _historyPlayingId !== entry.id) {
+            _historyAudioEl.pause();
+            // Reset old play button
+            const oldBtn = document.querySelector(`.hist-play-btn[data-entry-id="${_historyPlayingId}"]`);
+            if (oldBtn) { oldBtn.textContent = '▶'; oldBtn.classList.remove('playing'); }
+            const oldFill = document.getElementById(`hist-fill-${_historyPlayingId}`);
+            if (oldFill) oldFill.style.width = '0%';
+            const oldTime = document.getElementById(`hist-time-${_historyPlayingId}`);
+            if (oldTime) oldTime.textContent = '0:00';
+        }
+
+        _historyPlayingId = entry.id;
+        _historyAudioEl.src = `/api/history/${entry.id}/audio`;
+        _historyAudioEl.play();
+        playBtn.textContent = '⏸';
+        playBtn.classList.add('playing');
+
+        // Progress update
+        _historyAudioEl.ontimeupdate = () => {
+            if (!_historyAudioEl.duration) return;
+            const pct = (_historyAudioEl.currentTime / _historyAudioEl.duration) * 100;
+            fill.style.width = pct + '%';
+            timeEl.textContent = _historyFmt(_historyAudioEl.currentTime);
+        };
+
+        _historyAudioEl.onended = () => {
+            playBtn.textContent = '▶';
+            playBtn.classList.remove('playing');
+            fill.style.width = '0%';
+            timeEl.textContent = '0:00';
+            _historyPlayingId = null;
+        };
+
+        _historyAudioEl.onpause = () => {
+            if (_historyPlayingId === entry.id) {
+                playBtn.textContent = '▶';
+                playBtn.classList.remove('playing');
+            }
+        };
+    });
+
+    // Click progress track to seek
+    track.addEventListener('click', (e) => {
+        if (!_historyAudioEl || _historyPlayingId !== entry.id || !_historyAudioEl.duration) return;
+        const rect = track.getBoundingClientRect();
+        const pct  = (e.clientX - rect.left) / rect.width;
+        _historyAudioEl.currentTime = pct * _historyAudioEl.duration;
+    });
+
+    // ── Rename on blur ──────────────────────────────────────
+    const titleInput = wrap.querySelector('.history-title-edit');
+    titleInput.addEventListener('blur', async () => {
+        const newTitle = titleInput.value.trim();
+        if (!newTitle || newTitle === entry.title) return;
+        const res = await apiFetch(`/api/history/${entry.id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title: newTitle }),
+        });
+        if (res && res.ok) {
+            entry.title = newTitle;
+            showToast('Title saved', 'ok');
+        }
+    });
+    titleInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); titleInput.blur(); }
+        if (e.key === 'Escape') { titleInput.value = entry.title; titleInput.blur(); }
+    });
+
+    // ── Delete button ───────────────────────────────────────
+    const delBtn = wrap.querySelector('.history-entry-del-btn');
+    delBtn.addEventListener('click', async () => {
+        if (!confirm(`Delete "${entry.title || entry.id}"?\nThis will permanently remove the audio${entry.has_video ? ' and video' : ''} file.`)) return;
+
+        // Stop audio if playing this one
+        if (_historyPlayingId === entry.id && _historyAudioEl) {
+            _historyAudioEl.pause();
+            _historyPlayingId = null;
+        }
+
+        const res = await apiFetch(`/api/history/${entry.id}`, { method: 'DELETE' });
+        if (res && res.ok) {
+            wrap.style.opacity = '0';
+            wrap.style.transform = 'translateX(20px)';
+            wrap.style.transition = 'all 0.2s ease';
+            setTimeout(() => {
+                wrap.remove();
+                // Reload fully to keep state accurate
+                loadHistory();
+            }, 200);
+            showToast('Entry deleted', 'ok');
+        } else {
+            showToast('Failed to delete entry', 'err');
+        }
+    });
+
+    return wrap;
+}
+
+function initHistoryDrawer() {
+    const openBtn  = document.getElementById('btn-open-history');
+    const drawer   = document.getElementById('history-drawer');
+    const backdrop = document.getElementById('history-backdrop');
+    const closeBtn = document.getElementById('history-drawer-close');
+    const search   = document.getElementById('history-search');
+
+    if (!openBtn || !drawer) return;
+
+    function openDrawer() {
+        drawer.classList.remove('hidden');
+        backdrop.classList.remove('hidden');
+        loadHistory();
+    }
+
+    function closeDrawer() {
+        drawer.classList.add('hidden');
+        backdrop.classList.add('hidden');
+        // Pause audio on close
+        if (_historyAudioEl && !_historyAudioEl.paused) {
+            _historyAudioEl.pause();
+        }
+    }
+
+    openBtn.addEventListener('click', openDrawer);
+    closeBtn.addEventListener('click', closeDrawer);
+    backdrop.addEventListener('click', closeDrawer);
+
+    // Keyboard ESC to close
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && !drawer.classList.contains('hidden')) closeDrawer();
+    });
+
+    // Search / filter
+    search.addEventListener('input', () => {
+        const q = search.value.toLowerCase();
+        if (!q) {
+            renderHistoryEntries(_historyEntries);
+            return;
+        }
+        const filtered = _historyEntries.filter(e =>
+            (e.title || '').toLowerCase().includes(q) ||
+            (e.voice || '').toLowerCase().includes(q) ||
+            (KOKORO_VOICE_LABELS[e.voice] || '').toLowerCase().includes(q)
+        );
+        renderHistoryEntries(filtered);
+    });
+
+    // Auto-refresh history badge on page load
+    loadHistory();
 }

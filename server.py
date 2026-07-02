@@ -6,6 +6,7 @@
 # ============================================================
 
 import asyncio
+import datetime
 import json
 import os
 import shutil
@@ -29,7 +30,7 @@ from core.audio import get_duration, get_duration_secs
 
 # ── App setup ────────────────────────────────────────────────
 
-app = FastAPI(title="Narrator", docs_url=None, redoc_url=None)
+app = FastAPI(title="Resonate", docs_url=None, redoc_url=None)
 
 # Serve static files from web/
 app.mount("/static", StaticFiles(directory="web"), name="static")
@@ -48,6 +49,82 @@ _gen_state = {
     "chunks_done": [],
     "output_file": None,
 }
+
+# Generation history archive directory
+ARCHIVE_DIR = Path("outputs/archive")
+
+
+def _get_title_from_script(script_path: str) -> str:
+    """Extract a clean short title from the first non-empty line of the script."""
+    if not os.path.exists(script_path):
+        return ""
+    try:
+        content = Path(script_path).read_text(encoding="utf-8")
+        for line in content.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            # Remove any overrides like [voice:...] or [emotion:...]
+            import re
+            clean = re.sub(r"\[[^\]]*\]", "", line).strip()
+            if clean:
+                # Limit length to first 7 words
+                words = clean.split()
+                if len(words) > 7:
+                    return " ".join(words[:7]) + "..."
+                return clean
+    except Exception:
+        pass
+    return ""
+
+
+def _archive_generation(audio_path: str, video_path: str | None, title: str = "") -> dict | None:
+    """Copy finished audio (and optional video) into a timestamped archive folder."""
+    if not audio_path or not os.path.exists(audio_path):
+        return None
+    ts   = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    dest = ARCHIVE_DIR / ts
+    dest.mkdir(parents=True, exist_ok=True)
+
+    # Copy audio
+    audio_dest = dest / "audio.wav"
+    shutil.copy2(audio_path, audio_dest)
+
+    # Copy MP3 if exists
+    mp3_src = Path(audio_path).with_suffix(".mp3")
+    if mp3_src.exists():
+        shutil.copy2(mp3_src, dest / "audio.mp3")
+
+    # Copy video if provided
+    has_video = False
+    if video_path and os.path.exists(video_path):
+        shutil.copy2(video_path, dest / "video.mp4")
+        has_video = True
+
+    # Copy current script snapshot
+    if os.path.exists(config.SCRIPT_FILE):
+        shutil.copy2(config.SCRIPT_FILE, dest / "script.txt")
+
+    # Resolve a clean descriptive title from script content
+    resolved_title = title.strip() if title else ""
+    if not resolved_title:
+        resolved_title = _get_title_from_script(config.SCRIPT_FILE)
+    if not resolved_title:
+        resolved_title = f"Generation {ts}"
+
+    # Save metadata JSON
+    meta = {
+        "id":        ts,
+        "title":     resolved_title,
+        "created":   datetime.datetime.now().isoformat(),
+        "voice":     config.VOICE,
+        "speed":     config.SPEED,
+        "emotion":   config.EMOTION,
+        "has_video": has_video,
+        "duration":  get_duration(str(audio_dest)),
+    }
+    (dest / "meta.json").write_text(json.dumps(meta, indent=2))
+    return meta
 
 # SSE subscribers (asyncio queues)
 _sse_subscribers: list[asyncio.Queue] = []
@@ -477,6 +554,14 @@ async def _run_worker(mode: str, text: str = ""):
                         output_file=data.get("output_file"),
                         chunks_done=data.get("chunks_done", _gen_state["chunks_done"]),
                     )
+                    # Archive this generation
+                    try:
+                        _archive_generation(
+                            audio_path=config.OUTPUT_FILE,
+                            video_path=None,  # video archives separately when video is done
+                        )
+                    except Exception as _ae:
+                        print(f"Archive warning (audio): {_ae}")
 
                 elif event == "error":
                     _update_state(
@@ -518,6 +603,7 @@ async def _run_worker(mode: str, text: str = ""):
         # Clean up config file
         if os.path.exists(config_path):
             os.remove(config_path)
+        _update_state(running=False)
 
 
 _worker_task = None  # asyncio.Task
@@ -748,6 +834,91 @@ async def clear_outputs():
     return {"ok": True}
 
 
+# ── Routes: Generation History ───────────────────────────────
+
+
+@app.get("/api/history")
+async def list_history():
+    """Return all archived generation entries, newest first."""
+    entries = []
+    if ARCHIVE_DIR.exists():
+        for folder in sorted(ARCHIVE_DIR.iterdir(), reverse=True):
+            meta_path = folder / "meta.json"
+            if meta_path.exists():
+                try:
+                    meta = json.loads(meta_path.read_text())
+                    # Compute sizes
+                    audio_p = folder / "audio.wav"
+                    video_p = folder / "video.mp4"
+                    meta["audio_exists"] = audio_p.exists()
+                    meta["video_exists"] = video_p.exists()
+                    meta["audio_size"]   = audio_p.stat().st_size if audio_p.exists() else 0
+                    meta["video_size"]   = video_p.stat().st_size if video_p.exists() else 0
+                    entries.append(meta)
+                except Exception:
+                    pass
+    return {"entries": entries}
+
+
+@app.patch("/api/history/{entry_id}")
+async def rename_history_entry(entry_id: str, request: Request):
+    """Rename a history entry."""
+    data = await request.json()
+    new_title = data.get("title", "").strip()
+    if not new_title:
+        return JSONResponse({"ok": False, "error": "Title required"}, 400)
+    folder = ARCHIVE_DIR / entry_id
+    meta_path = folder / "meta.json"
+    if not meta_path.exists():
+        return JSONResponse({"ok": False, "error": "Not found"}, 404)
+    meta = json.loads(meta_path.read_text())
+    meta["title"] = new_title
+    meta_path.write_text(json.dumps(meta, indent=2))
+    return {"ok": True}
+
+
+@app.get("/api/history/{entry_id}/audio")
+async def serve_history_audio(entry_id: str, fmt: str = "wav"):
+    """Stream the archived audio for a specific entry."""
+    folder = ARCHIVE_DIR / entry_id
+    if fmt == "mp3":
+        path = folder / "audio.mp3"
+        if path.exists():
+            return FileResponse(path, media_type="audio/mpeg", filename=f"{entry_id}.mp3")
+    path = folder / "audio.wav"
+    if path.exists():
+        return FileResponse(path, media_type="audio/wav", filename=f"{entry_id}.wav")
+    return JSONResponse({"error": "Not found"}, 404)
+
+
+@app.get("/api/history/{entry_id}/video")
+async def serve_history_video(entry_id: str):
+    """Stream the archived video for a specific entry."""
+    path = ARCHIVE_DIR / entry_id / "video.mp4"
+    if path.exists():
+        return FileResponse(path, media_type="video/mp4", filename=f"{entry_id}.mp4")
+    return JSONResponse({"error": "Not found"}, 404)
+
+
+@app.get("/api/history/{entry_id}/script")
+async def serve_history_script(entry_id: str):
+    """Return the script snapshot for a specific entry."""
+    path = ARCHIVE_DIR / entry_id / "script.txt"
+    if path.exists():
+        return {"text": path.read_text(encoding="utf-8")}
+    return JSONResponse({"error": "Not found"}, 404)
+
+
+@app.delete("/api/history/{entry_id}")
+async def delete_history_entry(entry_id: str):
+    """Permanently delete a history entry."""
+    folder = ARCHIVE_DIR / entry_id
+    if folder.exists() and folder.parent == ARCHIVE_DIR:
+        shutil.rmtree(folder)
+        return {"ok": True}
+    return JSONResponse({"ok": False, "error": "Not found"}, 404)
+
+
 # ── Routes: Video (B-Roll) ──────────────────────────────
 
 _video_worker_process = None
@@ -841,6 +1012,22 @@ async def _run_video_worker():
                         current_chunk=data.get("current_chunk", _video_state["current_chunk"]),
                         total_chunks=data.get("total_chunks", _video_state["total_chunks"]),
                     )
+                    # Archive with video included (update most recent audio-only archive)
+                    try:
+                        video_out = data.get("output_file") or config.VIDEO_OUTPUT_FILE
+                        # Find most recent archive and patch video into it
+                        if ARCHIVE_DIR.exists():
+                            folders = sorted(ARCHIVE_DIR.iterdir(), reverse=True)
+                            if folders:
+                                latest = folders[0]
+                                meta_path = latest / "meta.json"
+                                if meta_path.exists() and video_out and os.path.exists(video_out):
+                                    shutil.copy2(video_out, latest / "video.mp4")
+                                    meta = json.loads(meta_path.read_text())
+                                    meta["has_video"] = True
+                                    meta_path.write_text(json.dumps(meta, indent=2))
+                    except Exception as _ve:
+                        print(f"Archive warning (video): {_ve}")
 
                 elif event == "error":
                     _update_video_state(
@@ -877,6 +1064,7 @@ async def _run_video_worker():
         _video_worker_process = None
         if os.path.exists(config_path):
             os.remove(config_path)
+        _update_video_state(running=False)
 
 
 @app.get("/api/video/status")
@@ -1037,7 +1225,7 @@ async def clear_video_outputs():
 # ── Main ─────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    print(f"\n  🎙️  Narrator Dashboard → http://{config.SERVER_HOST}:{config.SERVER_PORT}\n")
+    print(f"\n  🎙️  Resonate Dashboard → http://{config.SERVER_HOST}:{config.SERVER_PORT}\n")
     uvicorn.run(
         "server:app",
         host=config.SERVER_HOST,

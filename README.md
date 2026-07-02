@@ -1,17 +1,27 @@
-# Narrator
+# Resonate AI Studio 🎙️
 
-Local, production-grade AI voice studio and B-Roll video generator. Powered by **Kokoro-82M ONNX** for instant, studio-quality human voice synthesis, and integrated with an automated B-Roll video generator. Runs entirely on-device with zero-subscription, zero cloud APIs, and zero configuration.
+Local, production-grade AI voice narration and automated cinematic B-Roll video studio. Powered by **Kokoro-82M ONNX** for instant, studio-quality human voice synthesis, and integrated with context-aware visual B-Roll generation. Runs entirely on-device with zero subscriptions, zero cloud APIs, and zero configuration.
 
 ---
 
-## What We Implemented & How It Works
+## Key Features
+
+- **AI Voice Advisor (Voice Suggestion)**: Paste a short summary description of your narrative character, emotional arc, and pacing. The local intelligent advisor immediately suggests the optimal voice profile, emotion preset, speed, and custom tone prompt, applying them instantly to your session.
+- **Voice Browser (Rich Picker Modal)**: Visual search and category filters (US/UK, Male/Female) across all 28 studio voice profiles. Play instant sample audio previews and apply narrator profiles with a single click.
+- **Local Generation History**: Complete history tracking of every generation with customizable titles (inline editable), tags for voice/speed/duration/video-inclusion, individual deletion controls, mini audio players, and fast downloads for WAV and MP4 formats.
+- **Visual B-Roll Integration**: Automatically parses script keywords (via local heuristics or free Gemini Flash keys) to query, download, stitch, and pad orientation-aware B-Roll scenes.
+- **Acoustic Engineering**: EBU R128 loudness normalization, custom silence gap padding, and automatic WAV/MP3 conversion.
+
+---
+
+## System Workflow
 
 This project features a fully automated workflow that handles script writing, voice generation, visual B-roll selection, and final video editing:
 
 ```
 [ Your Script ] ➔ 🎙 Kokoro-82M ONNX ➔ [ Audio Chunks ] ➔ 🎛 Silence & Stitch ➔ [ final_audio.wav ]
-                                                                                   │
-[ final_video.mp4 ] 🏓 Multi-Clip Merge 🏓 Keyword Search (Gemini/Pexels) 🏓 Auto-Start B-Roll (Optional)
+                                                                                    │
+[ final_video.mp4 ] 🏓 Multi-Clip Merge 🎓 Keyword Search (Gemini/Pexels) ➔ [ Auto-Archive / History ]
 ```
 
 1. **Kokoro-82M ONNX Engine**: Replaced the heavy, slow MLX Qwen3-TTS engine with a lightweight, high-performance ONNX implementation of Kokoro-82M. It loads instantly, runs seamlessly on CPU or GPU, and produces hyper-realistic, human-like voice synthesis.

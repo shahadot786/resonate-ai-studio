@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Narrator — Production AI Voice Studio</title>
-    <meta name="description" content="Local production-grade AI narration studio powered by Kokoro-82M.">
+    <title>Resonate — Production AI Voice & Video Studio</title>
+    <meta name="description" content="Local production-grade AI narration and video studio powered by Kokoro-82M.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;450;500;650;750&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -19,10 +19,10 @@
         <aside id="sidebar">
             <div class="sidebar-header">
                 <div class="brand">
-                    <span class="brand-icon">🎙️</span>
+                    <img src="/static/resonate_logo.jpg" alt="Resonate Logo" class="brand-logo-img">
                     <div class="brand-text">
-                        <h1>Narrator</h1>
-                        <span class="brand-subtext">AI Studio v3</span>
+                        <h1>Resonate</h1>
+                        <span class="brand-subtext">AI Studio v4</span>
                     </div>
                 </div>
                 <div class="system-status" id="system-status">
@@ -55,15 +55,16 @@
                 
                 <!-- Card: Voice Settings -->
                 <div class="sidebar-card" id="card-voice-settings">
-                    <div class="card-headline">
-                        Studio Voice Settings
-                        <span class="engine-badge">Kokoro</span>
+                    <div class="card-headline" style="display:flex;align-items:center;justify-content:space-between;">
+                        <span>Studio Voice Settings <span class="engine-badge">Kokoro</span></span>
+                        <button class="btn btn-suggest-voice" id="btn-open-suggest" title="Get AI voice & emotion suggestions for your script">✨ Voice Suggest</button>
                     </div>
                     <div class="control-group">
                         <label for="select-voice">Active Narrator</label>
                         <div class="select-row">
                             <select id="select-voice"></select>
                             <button class="btn btn-icon" id="btn-voice-preview" title="Play Narrator Sample Preview">▶</button>
+                            <button class="btn btn-icon" id="btn-open-voice-picker" title="Browse all voices">⊞</button>
                         </div>
                     </div>
                     <div class="control-group">
@@ -170,13 +171,12 @@
             <!-- Editor Console Toolbar -->
             <div class="workspace-header">
                 <div class="toolbar-brand">
-                    <h2>Narrator Script Workspace</h2>
+                    <h2>Resonate Script Workspace</h2>
                     <span class="stats-badge" id="chunk-counter">0 Chunks</span>
                 </div>
                 <div class="toolbar-actions">
                     <span class="stats-text" id="word-counter">0 words</span>
-                    <button class="btn btn-secondary" id="btn-polish-script" style="margin-right: 6px;" title="Polish script numbers and abbreviations for smooth pronunciation">✨ Polish Text</button>
-                    <button class="btn btn-secondary" id="btn-analyze-script" style="margin-right: 6px;" title="Analyze script and auto-inject director voice & emotion tags">🎨 Auto-Direct Script</button>
+                    <button class="btn btn-history" id="btn-open-history" title="Generation History">📂 History <span class="history-count-badge" id="history-count-badge"></span></button>
                     <button class="btn btn-save" id="btn-save-script">💾 Save Changes</button>
                 </div>
             </div>
@@ -340,6 +340,90 @@
     <!-- Hidden Audio Nodes -->
     <audio id="audio-main-node" preload="none"></audio>
     <audio id="audio-ref-node" preload="none"></audio>
+
+    <!-- ══════════ HISTORY DRAWER ══════════ -->
+    <div class="history-backdrop hidden" id="history-backdrop"></div>
+    <aside class="history-drawer hidden" id="history-drawer">
+        <div class="history-drawer-header">
+            <div class="history-drawer-title-row">
+                <div>
+                    <h2 class="history-drawer-title">📂 Generation History</h2>
+                    <p class="history-drawer-sub">Every generation is saved locally. Click a title to rename.</p>
+                </div>
+                <button class="modal-close-btn" id="history-drawer-close">✕</button>
+            </div>
+            <input type="text" id="history-search" class="history-search-input" placeholder="🔍  Search by title, voice…" autocomplete="off">
+        </div>
+        <div class="history-list" id="history-list">
+            <!-- entries injected by JS -->
+        </div>
+        <div class="history-empty hidden" id="history-empty">
+            <div class="history-empty-icon">🎤</div>
+            <div class="history-empty-msg">No generations yet.<br>Run a generation and it will appear here.</div>
+        </div>
+    </aside>
+
+    <!-- ══════════ VOICE PICKER MODAL ══════════ -->
+    <div class="modal-overlay hidden" id="voice-picker-modal">
+        <div class="modal-panel modal-wide">
+            <div class="modal-header">
+                <div class="modal-title-block">
+                    <span class="modal-icon">🎙️</span>
+                    <div>
+                        <h2 class="modal-title">Voice Browser</h2>
+                        <p class="modal-subtitle">Browse and preview all available Kokoro narrators</p>
+                    </div>
+                </div>
+                <button class="modal-close-btn" id="voice-picker-close">✕</button>
+            </div>
+            <div class="modal-body">
+                <div class="voice-picker-search-bar">
+                    <input type="text" id="voice-picker-search" placeholder="🔍  Search voices..." autocomplete="off">
+                    <div class="voice-filter-pills" id="voice-filter-pills">
+                        <button class="vpill active" data-filter="all">All</button>
+                        <button class="vpill" data-filter="us-f">🇺🇸 Female</button>
+                        <button class="vpill" data-filter="us-m">🇺🇸 Male</button>
+                        <button class="vpill" data-filter="uk-f">🇬🇧 Female</button>
+                        <button class="vpill" data-filter="uk-m">🇬🇧 Male</button>
+                    </div>
+                </div>
+                <div class="voice-picker-grid" id="voice-picker-grid"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ══════════ VOICE SUGGESTION MODAL ══════════ -->
+    <div class="modal-overlay hidden" id="voice-suggest-modal">
+        <div class="modal-panel">
+            <div class="modal-header">
+                <div class="modal-title-block">
+                    <span class="modal-icon">✨</span>
+                    <div>
+                        <h2 class="modal-title">AI Voice Advisor</h2>
+                        <p class="modal-subtitle">Paste a short summary of your script — get the perfect voice & emotion settings</p>
+                    </div>
+                </div>
+                <button class="modal-close-btn" id="voice-suggest-close">✕</button>
+            </div>
+            <div class="modal-body">
+                <div class="suggest-input-section">
+                    <label class="suggest-label">Script Summary / Narration Direction</label>
+                    <textarea id="suggest-summary-input" rows="6" placeholder="Describe the tone, character, emotional arc, and style of your narration. For example: Narrate as a first-person confession from Maya, a finance analyst who was betrayed. Start calm, build tension during betrayal, then end with quiet confident resolve. Cinematic and emotionally controlled."></textarea>
+                    <button class="btn btn-primary btn-suggest-run" id="btn-run-suggestion">
+                        <span id="suggest-btn-label">🤖 Generate Suggestions</span>
+                    </button>
+                </div>
+                <div class="suggest-results hidden" id="suggest-results">
+                    <div class="suggest-divider"><span>Recommended Settings</span></div>
+                    <div class="suggest-cards" id="suggest-cards-container"></div>
+                    <div class="suggest-actions">
+                        <button class="btn btn-primary" id="btn-apply-suggestion">✅ Apply These Settings</button>
+                        <button class="btn btn-secondary" id="btn-suggest-again">↩ Try Again</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <script src="/static/app.js"></script>
 </body>
