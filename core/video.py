@@ -45,11 +45,16 @@ def _gemini_keyword(text: str, api_key: str) -> str:
         from google import genai
         client = genai.Client(api_key=api_key)
         prompt = (
-            "You are a video editor choosing b-roll footage. "
-            "Given this narration line, return ONLY a short 2-4 word search phrase "
-            "that best describes what video footage should appear on screen. "
-            "Be specific and visual. No explanation, just the phrase.\n\n"
-            f"Narration: {text}"
+            "You are an expert YouTube B-roll director choosing stock footage for a narration script line.\n"
+            f"Narration line: \"{text}\"\n\n"
+            "CRITICAL INSTRUCTIONS FOR STOCK SEARCH CONVERSION:\n"
+            "1. DO NOT be literal with metaphors. If the script says 'bank account ripped open with a shovel' or 'cash vanished', "
+            "search for the underlying visual meaning: 'empty wallet', 'stressed businessman laptop', 'low bank balance'.\n"
+            "2. DO NOT search for abstract time/transition phrases (e.g. 'four days later', 'suddenly'). "
+            "Instead, search for concrete visuals: 'phone call office', 'clocks ticking', 'empty desk'.\n"
+            "3. DO NOT search for character names or dialogue tags. Search for visual equivalents: 'man talking phone', 'stressed face'.\n"
+            "4. Keep the search query simple and highly searchable (2-3 words, lowercase, no punctuation).\n\n"
+            "Return ONLY a short 2-3 word search query phrase, with no explanation, markdown formatting, or punctuation."
         )
         # Try free-tier models in order (confirmed working first)
         models = [
@@ -99,13 +104,23 @@ def extract_subclip_keywords(text: str, n_subs: int, mode: str = "rake", api_key
             from google import genai
             client = genai.Client(api_key=api_key)
             prompt = (
-                f"You are a professional YouTube video editor. I have a narration script chunk:\n"
+                "You are an expert YouTube video editor and B-roll director.\n"
+                "I have a script segment:\n"
                 f"\"{text}\"\n\n"
-                f"This chunk will be split into exactly {n_subs} sequential video clips. "
-                f"Please extract exactly {n_subs} search queries (each 2-4 words long) in order, "
-                f"matching the sequence of visual ideas spoken in the script. "
-                f"Each query must be visual and suitable for stock video sites like Pexels.\n"
-                f"Return ONLY a JSON list of strings, e.g. [\"query1\", \"query2\"]. No other text or markdown."
+                f"This segment will be split into exactly {n_subs} sequential video clips. "
+                f"You need to provide exactly {n_subs} visual search queries (one for each clip, in chronological order) "
+                "suitable for fetching stock footage from Pexels or Pixabay.\n\n"
+                "CRITICAL INSTRUCTIONS FOR STOCK SEARCH CONVERSION:\n"
+                "1. DO NOT be literal with metaphors. If the script says 'bank account ripped open with a shovel' or 'cash vanished into thin air', "
+                "do NOT search for shovels or vanishing cash. Instead, search for visual representations of the underlying meaning: "
+                "'empty wallet', 'stressed businessman screen', 'bank balance phone', 'man head in hands'.\n"
+                "2. DO NOT search for abstract time phrases or transition words (e.g. 'four days later', 'suddenly', 'meanwhile', 'next morning'). "
+                "Instead, look at the action/setting and search for: 'calling phone office', 'clocks ticking', 'sunrise city skyline'.\n"
+                "3. DO NOT use character names (e.g. 'Derek', 'Marcus') or dialogue tags. Search for the visual counterpart: "
+                "'man sitting desk', 'two men talking', 'empty office desk'.\n"
+                "4. Keep each query simple, visual, and highly searchable (2-3 words, lowercase, no punctuation).\n\n"
+                f"Return ONLY a valid JSON list of exactly {n_subs} strings, for example: "
+                "[\"query1\", \"query2\", \"query3\"]. Do not include any explanation or markdown formatting."
             )
             models = ["gemini-2.5-flash", "gemini-2.0-flash-001", "gemini-2.0-flash"]
             for model in models:
