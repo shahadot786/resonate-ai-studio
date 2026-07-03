@@ -1340,7 +1340,10 @@ function renderReviewCard(seg) {
             <span class="rcc-type-badge ${typeLabel}">${typeLabel}</span>
         </div>
         <div class="rcc-actions">
-            <button class="btn-rcc" onclick="toggleReplaceForm(${seg.index})">🔄 Change Clip</button>
+            <div class="rcc-btn-row" style="margin-bottom: 6px;">
+                <button class="btn-rcc btn-preview-rcc primary" style="border-color: #7c9dff; color: #7c9dff; background: rgba(124,157,255,0.06);">👁 Preview</button>
+                <button class="btn-rcc" onclick="toggleReplaceForm(${seg.index})">🔄 Change</button>
+            </div>
             <div class="rcc-replace-form" id="${formId}">
                 <input class="rcc-kw-input" id="rcc-kw-${seg.index}" placeholder="New keyword…" value="${escapeHtml(kwLabel)}">
                 <div class="rcc-btn-row">
@@ -1354,9 +1357,10 @@ function renderReviewCard(seg) {
         </div>
     `;
 
-    // Click on thumb opens full preview modal
+    // Click on thumb or preview button opens full preview modal
     const thumb = card.querySelector('.rcc-thumb');
     thumb.addEventListener('click', () => showVideoPreviewModal(seg));
+    card.querySelector('.btn-preview-rcc').addEventListener('click', () => showVideoPreviewModal(seg));
 
     return card;
 }
