@@ -945,19 +945,23 @@ async def _run_video_worker():
     config_path = os.path.join("outputs", ".video_worker_config.json")
     os.makedirs("outputs", exist_ok=True)
 
+    merge_trigger_file = os.path.join("outputs", ".merge_trigger")
     worker_cfg = {
-        "pexels_api_key":  config.PEXELS_API_KEY,
-        "pixabay_api_key": config.PIXABAY_API_KEY,
-        "coverr_api_key":  config.COVERR_API_KEY,
-        "gemini_api_key":  config.GEMINI_API_KEY,
-        "keyword_mode":    config.KEYWORD_MODE,
-        "resolution":      config.VIDEO_RESOLUTION,
-        "fps":             config.VIDEO_FPS,
-        "script_file":     config.SCRIPT_FILE,
-        "chunks_dir":      config.CHUNKS_DIR,
-        "segments_dir":    config.VIDEO_SEGMENTS_DIR,
-        "output_file":     config.VIDEO_OUTPUT_FILE,
-        "audio_file":      config.OUTPUT_FILE,
+        "pexels_api_key":      config.PEXELS_API_KEY,
+        "pixabay_api_key":     config.PIXABAY_API_KEY,
+        "coverr_api_key":      config.COVERR_API_KEY,
+        "gemini_api_key":      config.GEMINI_API_KEY,
+        "keyword_mode":        config.KEYWORD_MODE,
+        "resolution":          config.VIDEO_RESOLUTION,
+        "fps":                 config.VIDEO_FPS,
+        "script_file":         config.SCRIPT_FILE,
+        "chunks_dir":          config.CHUNKS_DIR,
+        "segments_dir":        config.VIDEO_SEGMENTS_DIR,
+        "output_file":         config.VIDEO_OUTPUT_FILE,
+        "audio_file":          config.OUTPUT_FILE,
+        "clip_interval":       getattr(config, "VIDEO_CLIP_INTERVAL", 0),
+        "review_before_merge": getattr(config, "VIDEO_REVIEW_BEFORE_MERGE", True),
+        "merge_trigger_file":  merge_trigger_file,
     }
 
     with open(config_path, "w") as f:
@@ -997,6 +1001,17 @@ async def _run_video_worker():
                     _update_video_state(
                         status=data.get("status", _video_state["status"]),
                         message=data.get("message", _video_state["message"]),
+                        current_chunk=data.get("current_chunk", _video_state["current_chunk"]),
+                        total_chunks=data.get("total_chunks", _video_state["total_chunks"]),
+                        segments_done=data.get("segments_done", _video_state["segments_done"]),
+                    )
+
+                elif event == "review_ready":
+                    # Pipeline is paused waiting for user to click Merge
+                    _update_video_state(
+                        running=True,
+                        status="review_ready",
+                        message=data.get("message", "Review clips before merging"),
                         current_chunk=data.get("current_chunk", _video_state["current_chunk"]),
                         total_chunks=data.get("total_chunks", _video_state["total_chunks"]),
                         segments_done=data.get("segments_done", _video_state["segments_done"]),
@@ -1173,13 +1188,15 @@ async def download_video():
 @app.get("/api/video/config")
 async def get_video_config():
     return {
-        "pexels_api_key":  config.PEXELS_API_KEY,
-        "pixabay_api_key": config.PIXABAY_API_KEY,
-        "coverr_api_key":  config.COVERR_API_KEY,
-        "gemini_api_key":  config.GEMINI_API_KEY,
-        "keyword_mode":    config.KEYWORD_MODE,
-        "resolution":      config.VIDEO_RESOLUTION,
-        "fps":             config.VIDEO_FPS,
+        "pexels_api_key":      config.PEXELS_API_KEY,
+        "pixabay_api_key":     config.PIXABAY_API_KEY,
+        "coverr_api_key":      config.COVERR_API_KEY,
+        "gemini_api_key":      config.GEMINI_API_KEY,
+        "keyword_mode":        config.KEYWORD_MODE,
+        "resolution":          config.VIDEO_RESOLUTION,
+        "fps":                 config.VIDEO_FPS,
+        "clip_interval":       getattr(config, "VIDEO_CLIP_INTERVAL", 10),
+        "review_before_merge": getattr(config, "VIDEO_REVIEW_BEFORE_MERGE", True),
     }
 
 
@@ -1187,17 +1204,210 @@ async def get_video_config():
 async def update_video_config(request: Request):
     data = await request.json()
     mapping = {
-        "pexels_api_key":  "PEXELS_API_KEY",
-        "pixabay_api_key": "PIXABAY_API_KEY",
-        "coverr_api_key":  "COVERR_API_KEY",
-        "gemini_api_key":  "GEMINI_API_KEY",
-        "keyword_mode":    "KEYWORD_MODE",
-        "resolution":      "VIDEO_RESOLUTION",
-        "fps":             "VIDEO_FPS",
+        "pexels_api_key":      "PEXELS_API_KEY",
+        "pixabay_api_key":     "PIXABAY_API_KEY",
+        "coverr_api_key":      "COVERR_API_KEY",
+        "gemini_api_key":      "GEMINI_API_KEY",
+        "keyword_mode":        "KEYWORD_MODE",
+        "resolution":          "VIDEO_RESOLUTION",
+        "fps":                 "VIDEO_FPS",
+        "clip_interval":       "VIDEO_CLIP_INTERVAL",
+        "review_before_merge": "VIDEO_REVIEW_BEFORE_MERGE",
     }
     for key, attr in mapping.items():
         if key in data:
             setattr(config, attr, data[key])
+    return {"ok": True}
+
+
+# ── Routes: Video Segment Preview & Replace ──────────────────
+
+
+@app.get("/api/video/segments")
+async def list_video_segments():
+    """Return metadata for all built video segments."""
+    segs_dir = Path(config.VIDEO_SEGMENTS_DIR)
+    segments = []
+    if segs_dir.exists():
+        for f in sorted(segs_dir.glob("segment_*.mp4")):
+            # Parse index from filename
+            try:
+                idx = int(f.stem.split("_")[1])
+            except (IndexError, ValueError):
+                continue
+            size = f.stat().st_size
+            # Find matching segment_done entry from current state
+            meta = {"index": idx, "file": f.name, "size": size, "ok": True}
+            for seg in _video_state.get("segments_done", []):
+                if seg.get("index") == idx:
+                    meta["keyword"]  = seg.get("keyword", "")
+                    meta["source"]   = seg.get("source", "")
+                    meta["type"]     = seg.get("type", "")
+                    meta["time"]     = seg.get("time", "")
+                    break
+            segments.append(meta)
+    return {"segments": segments}
+
+
+@app.get("/api/video/segments/{index}")
+async def serve_video_segment(index: int):
+    """Stream a single video segment file for preview."""
+    path = Path(config.VIDEO_SEGMENTS_DIR) / f"segment_{index:04d}.mp4"
+    if path.exists():
+        return FileResponse(str(path), media_type="video/mp4")
+    return JSONResponse({"error": "Segment not found"}, status_code=404)
+
+
+@app.post("/api/video/segments/{index}/replace")
+async def replace_video_segment(index: int, request: Request):
+    """
+    Re-search and rebuild a single video segment with a new keyword.
+    Runs synchronously in a thread pool to avoid blocking the event loop.
+    """
+    if _video_state.get("status") not in ("review_ready",):
+        return JSONResponse(
+            {"ok": False, "error": "Replace is only available during the review stage"},
+            status_code=409,
+        )
+
+    data     = await request.json()
+    keyword  = data.get("keyword", "").strip()
+    if not keyword:
+        return JSONResponse({"ok": False, "error": "keyword is required"}, status_code=400)
+
+    seg_path = str(Path(config.VIDEO_SEGMENTS_DIR) / f"segment_{index:04d}.mp4")
+
+    # Find matching audio chunk
+    audio_chunk = str(Path(config.CHUNKS_DIR) / f"chunk_{index:04d}.wav")
+    if not os.path.exists(audio_chunk):
+        return JSONResponse({"ok": False, "error": "Audio chunk not found for this segment"}, status_code=404)
+
+    from core.video import build_segment
+    import asyncio
+
+    def _rebuild():
+        # Remove existing segment so build_segment overwrites it
+        if os.path.exists(seg_path):
+            os.remove(seg_path)
+        # Override text with the provided keyword directly
+        result = build_segment(
+            index=index,
+            text=keyword,   # use keyword directly as the text (skips NLP extraction)
+            audio_path=audio_chunk,
+            out_path=seg_path,
+            pexels_key=config.PEXELS_API_KEY,
+            pixabay_key=config.PIXABAY_API_KEY,
+            coverr_key=config.COVERR_API_KEY,
+            gemini_key=config.GEMINI_API_KEY,
+            keyword_mode="rake",   # use RAKE so it returns the keyword as-is
+            resolution=config.VIDEO_RESOLUTION,
+            fps=config.VIDEO_FPS,
+            segments_dir=config.VIDEO_SEGMENTS_DIR,
+            clip_interval=0,       # no sub-splitting for manual replacement
+        )
+        return result
+
+    loop   = asyncio.get_event_loop()
+    result = await loop.run_in_executor(None, _rebuild)
+
+    if result.get("ok"):
+        # Patch segments_done in state
+        for seg in _video_state["segments_done"]:
+            if seg.get("index") == index:
+                seg.update(keyword=keyword, source=result.get("source"), type=result.get("type"))
+                break
+        _broadcast_video("progress", {
+            "running":       _video_state["running"],
+            "status":        _video_state["status"],
+            "message":       f"Segment {index+1} replaced with '{keyword}'",
+            "current_chunk": _video_state["current_chunk"],
+            "total_chunks":  _video_state["total_chunks"],
+            "segments_done": _video_state["segments_done"],
+        })
+        return {"ok": True, "source": result.get("source"), "type": result.get("type")}
+    else:
+        return JSONResponse({"ok": False, "error": "Rebuild failed — no clip found"}, status_code=500)
+
+
+@app.post("/api/video/segments/{index}/upload")
+async def upload_video_segment(index: int, file: UploadFile = File(...)):
+    """
+    Replace a video segment by uploading a custom video file.
+    Accepts any video format; converts to the project resolution via ffmpeg.
+    """
+    if _video_state.get("status") not in ("review_ready",):
+        return JSONResponse(
+            {"ok": False, "error": "Upload is only available during the review stage"},
+            status_code=409,
+        )
+
+    seg_path  = str(Path(config.VIDEO_SEGMENTS_DIR) / f"segment_{index:04d}.mp4")
+    audio_chunk = str(Path(config.CHUNKS_DIR) / f"chunk_{index:04d}.wav")
+
+    import tempfile
+    suffix = Path(file.filename).suffix if file.filename else ".mp4"
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        content = await file.read()
+        tmp.write(content)
+        tmp_path = tmp.name
+
+    try:
+        from core.video import fill_video_segment, _get_duration_secs
+        import asyncio
+
+        def _convert():
+            # Get target duration from audio chunk
+            if os.path.exists(audio_chunk):
+                from core.audio import get_duration_secs
+                duration = get_duration_secs(audio_chunk)
+            else:
+                duration = _get_duration_secs(tmp_path)
+            if duration <= 0:
+                duration = _get_duration_secs(tmp_path)
+            if os.path.exists(seg_path):
+                os.remove(seg_path)
+            return fill_video_segment(
+                [tmp_path], seg_path, duration,
+                config.VIDEO_RESOLUTION, config.VIDEO_FPS,
+            )
+
+        loop = asyncio.get_event_loop()
+        ok   = await loop.run_in_executor(None, _convert)
+
+        if ok:
+            for seg in _video_state["segments_done"]:
+                if seg.get("index") == index:
+                    seg.update(keyword="custom upload", source="upload", type="video")
+                    break
+            _broadcast_video("progress", {
+                "running":       _video_state["running"],
+                "status":        _video_state["status"],
+                "message":       f"Segment {index+1} replaced with uploaded file",
+                "current_chunk": _video_state["current_chunk"],
+                "total_chunks":  _video_state["total_chunks"],
+                "segments_done": _video_state["segments_done"],
+            })
+            return {"ok": True}
+        else:
+            return JSONResponse({"ok": False, "error": "Conversion failed"}, status_code=500)
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+
+@app.post("/api/video/merge")
+async def trigger_video_merge():
+    """Signal the video worker to proceed with final merge after review."""
+    if _video_state.get("status") != "review_ready":
+        return JSONResponse(
+            {"ok": False, "error": "Not in review state"},
+            status_code=409,
+        )
+    # Write trigger file — worker polls for this
+    trigger = os.path.join("outputs", ".merge_trigger")
+    os.makedirs("outputs", exist_ok=True)
+    Path(trigger).touch()
+    _update_video_state(status="merging", message="Merging all segments…")
     return {"ok": True}
 
 

@@ -36,18 +36,21 @@ def main():
         cfg = json.load(f)
 
     # ── Load config ──────────────────────────────────────────
-    pexels_key     = cfg.get("pexels_api_key", "")
-    pixabay_key    = cfg.get("pixabay_api_key", "")
-    coverr_key     = cfg.get("coverr_api_key", "")
-    gemini_key     = cfg.get("gemini_api_key", "")
-    keyword_mode   = cfg.get("keyword_mode", "rake")
-    resolution     = cfg.get("resolution", "1920x1080")
-    fps            = cfg.get("fps", 30)
-    script_file    = cfg.get("script_file", "script.txt")
-    chunks_dir     = cfg.get("chunks_dir", "outputs/chunks")
-    segments_dir   = cfg.get("segments_dir", "outputs/video/segments")
-    output_file    = cfg.get("output_file", "outputs/video/final_video.mp4")
-    audio_file     = cfg.get("audio_file", "outputs/final_episode.wav")
+    pexels_key          = cfg.get("pexels_api_key", "")
+    pixabay_key         = cfg.get("pixabay_api_key", "")
+    coverr_key          = cfg.get("coverr_api_key", "")
+    gemini_key          = cfg.get("gemini_api_key", "")
+    keyword_mode        = cfg.get("keyword_mode", "rake")
+    resolution          = cfg.get("resolution", "1920x1080")
+    fps                 = cfg.get("fps", 30)
+    script_file         = cfg.get("script_file", "script.txt")
+    chunks_dir          = cfg.get("chunks_dir", "outputs/chunks")
+    segments_dir        = cfg.get("segments_dir", "outputs/video/segments")
+    output_file         = cfg.get("output_file", "outputs/video/final_video.mp4")
+    audio_file          = cfg.get("audio_file", "outputs/final_episode.wav")
+    clip_interval       = float(cfg.get("clip_interval", 0))
+    review_before_merge = bool(cfg.get("review_before_merge", True))
+    merge_trigger_file  = cfg.get("merge_trigger_file", "outputs/.merge_trigger")
 
     # ── Import modules ───────────────────────────────────────
     from core.script import parse_script
@@ -95,7 +98,7 @@ def main():
 
         seg_path = os.path.join(segments_dir, f"segment_{i:04d}.mp4")
 
-        # Skip if already built
+        # Skip if already built (use cached)
         if os.path.exists(seg_path) and os.path.getsize(seg_path) > 1024:
             segment_paths.append(seg_path)
             entry = {"index": i, "keyword": "cached", "source": "cache",
@@ -128,6 +131,7 @@ def main():
             resolution=resolution,
             fps=fps,
             segments_dir=segments_dir,
+            clip_interval=clip_interval,
             progress_cb=_cb,
         )
 
@@ -143,23 +147,76 @@ def main():
                  current_chunk=i + 1, total_chunks=total,
                  segments_done=segments_done)
 
-    # ── Merge ─────────────────────────────────────────────────
+    # ── All segments ready — pause for review if enabled ──────
     if not segment_paths:
         progress("error", status="error",
                  message="No video segments were created",
                  segments_done=segments_done)
         sys.exit(1)
 
+    if review_before_merge:
+        # Remove stale trigger file if it exists
+        if os.path.exists(merge_trigger_file):
+            os.remove(merge_trigger_file)
+
+        # Emit review_ready — server/UI will show the Review Panel
+        progress("review_ready", status="review_ready",
+                 message=f"All {len(segment_paths)} clips ready. Review and click 'Merge Now' to continue.",
+                 current_chunk=total, total_chunks=total,
+                 segments_done=segments_done)
+
+        # Poll for merge trigger file (server writes it when user clicks Merge)
+        poll_interval = 1.0
+        timeout = 3600  # 1 hour max wait
+        waited = 0
+        while waited < timeout:
+            if os.path.exists(merge_trigger_file):
+                try:
+                    os.remove(merge_trigger_file)
+                except Exception:
+                    pass
+                break
+            # Also check for cancellation flag
+            cancel_file = merge_trigger_file.replace(".merge_trigger", ".cancel_trigger")
+            if os.path.exists(cancel_file):
+                try:
+                    os.remove(cancel_file)
+                except Exception:
+                    pass
+                progress("error", status="cancelled",
+                         message="Video generation cancelled by user.",
+                         segments_done=segments_done)
+                sys.exit(0)
+            time.sleep(poll_interval)
+            waited += poll_interval
+
+        if waited >= timeout:
+            progress("error", status="error",
+                     message="Review timed out (1 hour). Run again to merge.",
+                     segments_done=segments_done)
+            sys.exit(1)
+
+    # ── Merge ─────────────────────────────────────────────────
+    # Re-scan segments_dir to pick up any replacements made during review
+    final_paths = []
+    for i, chunk in enumerate(chunks):
+        seg_path = os.path.join(segments_dir, f"segment_{i:04d}.mp4")
+        if os.path.exists(seg_path) and os.path.getsize(seg_path) > 1024:
+            final_paths.append(seg_path)
+
+    if not final_paths:
+        final_paths = segment_paths  # fallback to original list
+
     progress("status", status="merging",
-             message=f"Merging {len(segment_paths)} segments with audio…",
+             message=f"Merging {len(final_paths)} segments with audio…",
              current_chunk=total, total_chunks=total)
 
-    ok = merge_segments_with_audio(segment_paths, audio_file, output_file, fps)
+    ok = merge_segments_with_audio(final_paths, audio_file, output_file, fps)
 
     if ok:
         size_mb = os.path.getsize(output_file) / (1024 * 1024)
         progress("done", status="done",
-                 message=f"Video ready! {len(segment_paths)} segments, {size_mb:.1f} MB",
+                 message=f"Video ready! {len(final_paths)} segments, {size_mb:.1f} MB",
                  output_file=output_file,
                  segments_done=segments_done,
                  total_chunks=total,

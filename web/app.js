@@ -904,6 +904,9 @@ function setupEventListeners() {
 
     // ── VIDEO AUTO-PIPELINE SETUP ────────────────────────────
     setupVideoPipeline();
+
+    // ── VIDEO PREVIEW MODAL ──────────────────────────────────
+    setupVideoPreviewModal();
 }
 
 // ============================================================
@@ -914,20 +917,27 @@ function setupAspectRatio() {
     const grid = document.getElementById('aspect-ratio-grid');
     if (!grid) return;
 
-    // Load current resolution from server and highlight active button
+    // Load current video config from server
     fetch('/api/video/config')
         .then(r => r.json())
         .then(cfg => {
             if (cfg.resolution) setActiveAR(cfg.resolution);
+            if (cfg.clip_interval !== undefined) {
+                const inp = document.getElementById('num-clip-interval');
+                if (inp) inp.value = cfg.clip_interval;
+            }
+            if (cfg.review_before_merge !== undefined) {
+                const chk = document.getElementById('check-review-before-merge');
+                if (chk) chk.checked = !!cfg.review_before_merge;
+            }
         })
         .catch(() => {});
 
-    // Click handler — update active state and save to server
+    // Aspect ratio click
     grid.querySelectorAll('.ar-btn').forEach(btn => {
         btn.addEventListener('click', () => {
             const res = btn.dataset.res;
             setActiveAR(res);
-            // Persist to server
             fetch('/api/video/config', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -935,6 +945,32 @@ function setupAspectRatio() {
             }).catch(() => {});
         });
     });
+
+    // Clip interval change
+    const clipInput = document.getElementById('num-clip-interval');
+    if (clipInput) {
+        clipInput.addEventListener('change', () => {
+            const val = Math.max(0, parseInt(clipInput.value) || 0);
+            clipInput.value = val;
+            fetch('/api/video/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ clip_interval: val }),
+            }).catch(() => {});
+        });
+    }
+
+    // Review before merge toggle
+    const reviewChk = document.getElementById('check-review-before-merge');
+    if (reviewChk) {
+        reviewChk.addEventListener('change', () => {
+            fetch('/api/video/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ review_before_merge: reviewChk.checked }),
+            }).catch(() => {});
+        });
+    }
 }
 
 function setActiveAR(resolution) {
@@ -1005,6 +1041,8 @@ async function startVideoGeneration() {
         const res  = await fetch('/api/video/create', { method: 'POST' });
         const data = await res.json();
         if (!data.ok) {
+            // 409 = already running — not an error to show the user
+            if (res.status === 409) return;
             document.getElementById('video-status-msg').textContent =
                 '❌ ' + (data.error || 'Could not start video');
         }
@@ -1035,7 +1073,8 @@ function handleVideoProgress(data) {
     }
 
     // Status label
-    const icons = { idle:'⚙', searching:'🔍', merging:'🎞', done:'✅', error:'❌', cancelled:'⛔' };
+    const icons = { idle:'⚙', searching:'🔍', merging:'🎞', done:'✅', error:'❌',
+                    cancelled:'⛔', review_ready:'🎬', loading:'⚡' };
     document.getElementById('video-status-msg').textContent =
         (icons[status] || '⚙') + ' ' + (message || '');
 
@@ -1044,14 +1083,29 @@ function handleVideoProgress(data) {
         segments_done.forEach(seg => renderChip(seg));
     }
 
+    // Review Ready — show the Review Panel, keep merge button visible
+    if (status === 'review_ready') {
+        document.getElementById('video-progress-bar').style.width = '100%';
+        buildReviewPanel(segments_done || []);
+        const reviewPanel = document.getElementById('review-panel');
+        if (reviewPanel) reviewPanel.classList.remove('hidden');
+        // Hide final player until merge is done
+        document.getElementById('video-output-player').classList.add('hidden');
+    } else {
+        const reviewPanel = document.getElementById('review-panel');
+        if (reviewPanel && status !== 'review_ready') reviewPanel.classList.add('hidden');
+    }
+
     // Done — show video player
     if (status === 'done') {
         document.getElementById('video-progress-bar').style.width = '100%';
+        const reviewPanel = document.getElementById('review-panel');
+        if (reviewPanel) reviewPanel.classList.add('hidden');
         revealVideoPlayer();
     }
 }
 
-// ── Segment chip ──────────────────────────────────────────────
+// ── Segment chip — clickable for preview ─────────────────────
 
 function renderChip(seg) {
     const row = document.getElementById('video-chip-row');
@@ -1074,7 +1128,12 @@ function renderChip(seg) {
 
     chip.className = `vchip ${cls}`;
     chip.innerHTML = `<span class="vchip-dot"></span>${typeEmoji} #${seg.index + 1} ${escapeHtml(seg.keyword || '')}`;
-    chip.title     = `Source: ${seg.source || '?'} | ${seg.time || ''}`;
+    chip.title     = `Source: ${seg.source || '?'} | ${seg.time || ''} — Click to preview`;
+
+    // Make chips clickable — open preview modal
+    chip.onclick = () => {
+        if (seg.ok) showVideoPreviewModal(seg);
+    };
 }
 
 function escapeHtml(s) {
@@ -1082,6 +1141,315 @@ function escapeHtml(s) {
 }
 
 // ── Reveal video player ───────────────────────────────────────
+
+// ── Video Preview Modal (with audio synchronization) ─────────
+
+function showVideoPreviewModal(seg) {
+    const modal  = document.getElementById('video-preview-modal');
+    const player = document.getElementById('vpreview-player');
+    const audio  = document.getElementById('vpreview-audio');
+    const title  = document.getElementById('vpreview-title');
+    const meta   = document.getElementById('vpreview-meta');
+    if (!modal || !player || !audio) return;
+
+    title.textContent = `Segment #${seg.index + 1} — ${seg.keyword || 'clip'}`;
+    meta.textContent  = `Source: ${seg.source || '?'} · Type: ${seg.type || '?'}${seg.time ? ' · ' + seg.time : ''}`;
+    
+    // Load Video
+    player.src = `/api/video/segments/${seg.index}?t=${Date.now()}`;
+    player.load();
+    player.muted = true; // Mute video so only synced narration audio plays
+
+    // Load Audio chunk
+    const padIndex = String(seg.index).padStart(4, '0');
+    audio.src = `/api/audio/chunk/chunk_${padIndex}.wav?t=${Date.now()}`;
+    audio.load();
+
+    // Reset controls UI
+    const playBtn = document.getElementById('vpreview-play-btn');
+    if (playBtn) playBtn.textContent = '▶';
+    const seekInput = document.getElementById('vpreview-seek');
+    if (seekInput) seekInput.value = 0;
+    const curTime = document.getElementById('vpreview-time-cur');
+    if (curTime) curTime.textContent = '0:00';
+    const durTime = document.getElementById('vpreview-time-dur');
+    if (durTime) durTime.textContent = '0:00';
+
+    modal.classList.remove('hidden');
+}
+
+function setupVideoPreviewModal() {
+    const closeBtn = document.getElementById('video-preview-close');
+    const modal    = document.getElementById('video-preview-modal');
+    const player   = document.getElementById('vpreview-player');
+    const audio    = document.getElementById('vpreview-audio');
+    const playBtn  = document.getElementById('vpreview-play-btn');
+    const seek     = document.getElementById('vpreview-seek');
+    const curTime  = document.getElementById('vpreview-time-cur');
+    const durTime  = document.getElementById('vpreview-time-dur');
+    const vol      = document.getElementById('vpreview-vol');
+
+    if (!modal || !player || !audio) return;
+
+    function pauseAll() {
+        player.pause();
+        audio.pause();
+        if (playBtn) playBtn.textContent = '▶';
+    }
+
+    function cleanup() {
+        pauseAll();
+        player.src = '';
+        audio.src = '';
+    }
+
+    if (closeBtn) {
+        closeBtn.addEventListener('click', () => {
+            modal.classList.add('hidden');
+            cleanup();
+        });
+    }
+
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+            modal.classList.add('hidden');
+            cleanup();
+        }
+    });
+
+    if (playBtn) {
+        playBtn.addEventListener('click', () => {
+            if (player.paused) {
+                // Synchronize audio and video start times
+                audio.currentTime = player.currentTime;
+                player.play();
+                audio.play().catch(() => {});
+                playBtn.textContent = '⏸';
+            } else {
+                pauseAll();
+            }
+        });
+    }
+
+    // Update seek bar and timer
+    player.addEventListener('timeupdate', () => {
+        if (player.duration) {
+            const pct = (player.currentTime / player.duration) * 100;
+            if (seek) seek.value = pct;
+            if (curTime) curTime.textContent = formatTimelineLabel(player.currentTime);
+            
+            // Sync logic: Keep audio aligned with video
+            if (!audio.paused) {
+                const diff = Math.abs(player.currentTime - audio.currentTime);
+                if (diff > 0.15) {
+                    audio.currentTime = player.currentTime;
+                }
+            }
+        }
+    });
+
+    player.addEventListener('loadedmetadata', () => {
+        if (durTime && player.duration) {
+            durTime.textContent = formatTimelineLabel(player.duration);
+        }
+    });
+
+    // If audio is playing but video ended (or vice versa)
+    player.addEventListener('ended', () => {
+        pauseAll();
+        if (seek) seek.value = 100;
+    });
+
+    if (seek) {
+        seek.addEventListener('input', () => {
+            if (player.duration) {
+                const targetTime = (seek.value / 100) * player.duration;
+                player.currentTime = targetTime;
+                audio.currentTime = targetTime;
+            }
+        });
+    }
+
+    if (vol) {
+        vol.addEventListener('input', () => {
+            audio.volume = vol.value;
+        });
+    }
+}
+
+// ── Review Panel ──────────────────────────────────────────────
+
+function buildReviewPanel(segments) {
+    const grid = document.getElementById('review-clips-grid');
+    if (!grid) return;
+    // Only rebuild if not already populated (avoid flickering on re-broadcasts)
+    if (grid.children.length === segments.length) return;
+    grid.innerHTML = '';
+    segments.forEach(seg => grid.appendChild(renderReviewCard(seg)));
+
+    // Wire up Merge Now button
+    const mergeBtn = document.getElementById('btn-merge-now');
+    if (mergeBtn) {
+        mergeBtn.onclick = () => triggerMerge(mergeBtn);
+    }
+}
+
+function renderReviewCard(seg) {
+    const card = document.createElement('div');
+    card.className = 'review-clip-card';
+    card.id = `rcc-${seg.index}`;
+
+    const typeLabel = seg.type || 'clip';
+    const srcLabel  = seg.source || '?';
+    const kwLabel   = seg.keyword || '';
+    const formId    = `rcc-form-${seg.index}`;
+    const uploadId  = `rcc-upload-${seg.index}`;
+
+    card.innerHTML = `
+        <div class="rcc-spinner" id="rcc-spin-${seg.index}">🔄 Searching…</div>
+        <div class="rcc-thumb" id="rcc-thumb-${seg.index}">
+            <video muted preload="metadata" src="/api/video/segments/${seg.index}?t=${Date.now()}"
+                   style="width:100%;height:100%;object-fit:cover;"></video>
+            <div class="rcc-thumb-overlay">▶</div>
+        </div>
+        <div class="rcc-info">
+            <div class="rcc-idx">Segment ${seg.index + 1}</div>
+            <div class="rcc-keyword" title="${escapeHtml(kwLabel)}">${escapeHtml(kwLabel)}</div>
+            <div class="rcc-source">${escapeHtml(srcLabel)}</div>
+            <span class="rcc-type-badge ${typeLabel}">${typeLabel}</span>
+        </div>
+        <div class="rcc-actions">
+            <button class="btn-rcc" onclick="toggleReplaceForm(${seg.index})">🔄 Change Clip</button>
+            <div class="rcc-replace-form" id="${formId}">
+                <input class="rcc-kw-input" id="rcc-kw-${seg.index}" placeholder="New keyword…" value="${escapeHtml(kwLabel)}">
+                <div class="rcc-btn-row">
+                    <button class="btn-rcc primary" onclick="replaceClip(${seg.index})">🔍 Re-search</button>
+                    <button class="btn-rcc danger" onclick="toggleReplaceForm(${seg.index})">Cancel</button>
+                </div>
+                <label class="rcc-upload-label" for="${uploadId}">📁 Upload Own Clip</label>
+                <input class="rcc-upload-input" id="${uploadId}" type="file" accept="video/*"
+                       onchange="uploadClip(${seg.index}, this)">
+            </div>
+        </div>
+    `;
+
+    // Click on thumb opens full preview modal
+    const thumb = card.querySelector('.rcc-thumb');
+    thumb.addEventListener('click', () => showVideoPreviewModal(seg));
+
+    return card;
+}
+
+function toggleReplaceForm(index) {
+    const form = document.getElementById(`rcc-form-${index}`);
+    if (form) form.classList.toggle('open');
+}
+
+async function replaceClip(index) {
+    const kwInput = document.getElementById(`rcc-kw-${index}`);
+    const keyword = kwInput ? kwInput.value.trim() : '';
+    if (!keyword) { showToast('Enter a keyword first', 'err'); return; }
+
+    const card    = document.getElementById(`rcc-${index}`);
+    const spinner = document.getElementById(`rcc-spin-${index}`);
+    if (spinner) spinner.classList.add('active');
+    if (card)   card.classList.add('replacing');
+
+    try {
+        const res  = await fetch(`/api/video/segments/${index}/replace`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ keyword }),
+        });
+        const data = await res.json();
+        if (data.ok) {
+            showToast(`Segment ${index + 1} replaced ✓`, 'ok');
+            if (card) card.classList.remove('replacing');
+            if (card) card.classList.add('replaced');
+            // Reload thumb video
+            const thumbVid = document.querySelector(`#rcc-thumb-${index} video`);
+            if (thumbVid) {
+                thumbVid.src = `/api/video/segments/${index}?t=${Date.now()}`;
+                thumbVid.load();
+            }
+            // Update keyword label
+            const kwEl = card ? card.querySelector('.rcc-keyword') : null;
+            if (kwEl) kwEl.textContent = keyword;
+            const srcEl = card ? card.querySelector('.rcc-source') : null;
+            if (srcEl) srcEl.textContent = data.source || '';
+            // Close form
+            toggleReplaceForm(index);
+        } else {
+            showToast('Replace failed: ' + (data.error || 'unknown'), 'err');
+            if (card) card.classList.remove('replacing');
+        }
+    } catch (e) {
+        showToast('Network error during replace', 'err');
+        if (card) card.classList.remove('replacing');
+    } finally {
+        if (spinner) spinner.classList.remove('active');
+    }
+}
+
+async function uploadClip(index, inputEl) {
+    const file = inputEl.files && inputEl.files[0];
+    if (!file) return;
+
+    const card    = document.getElementById(`rcc-${index}`);
+    const spinner = document.getElementById(`rcc-spin-${index}`);
+    if (spinner) { spinner.textContent = '📤 Uploading…'; spinner.classList.add('active'); }
+    if (card)   card.classList.add('replacing');
+
+    try {
+        const fd = new FormData();
+        fd.append('file', file);
+        const res  = await fetch(`/api/video/segments/${index}/upload`, {
+            method: 'POST',
+            body: fd,
+        });
+        const data = await res.json();
+        if (data.ok) {
+            showToast(`Segment ${index + 1} replaced with uploaded file ✓`, 'ok');
+            if (card) card.classList.remove('replacing');
+            if (card) card.classList.add('replaced');
+            // Reload thumb
+            const thumbVid = document.querySelector(`#rcc-thumb-${index} video`);
+            if (thumbVid) { thumbVid.src = `/api/video/segments/${index}?t=${Date.now()}`; thumbVid.load(); }
+            const kwEl = card ? card.querySelector('.rcc-keyword') : null;
+            if (kwEl) kwEl.textContent = 'custom upload';
+            const srcEl = card ? card.querySelector('.rcc-source') : null;
+            if (srcEl) srcEl.textContent = 'upload';
+        } else {
+            showToast('Upload failed: ' + (data.error || 'unknown'), 'err');
+            if (card) card.classList.remove('replacing');
+        }
+    } catch (e) {
+        showToast('Network error during upload', 'err');
+        if (card) card.classList.remove('replacing');
+    } finally {
+        if (spinner) { spinner.classList.remove('active'); spinner.textContent = '🔄 Searching…'; }
+        inputEl.value = '';
+    }
+}
+
+async function triggerMerge(btn) {
+    if (btn) { btn.disabled = true; btn.textContent = '⚙ Merging…'; }
+    try {
+        const res  = await fetch('/api/video/merge', { method: 'POST' });
+        const data = await res.json();
+        if (!data.ok) {
+            showToast('Merge failed: ' + (data.error || 'unknown'), 'err');
+            if (btn) { btn.disabled = false; btn.textContent = '⚡ Merge Now'; }
+        } else {
+            showToast('Merging… final video coming soon!', 'ok');
+            const reviewPanel = document.getElementById('review-panel');
+            if (reviewPanel) reviewPanel.classList.add('hidden');
+        }
+    } catch (e) {
+        showToast('Network error triggering merge', 'err');
+        if (btn) { btn.disabled = false; btn.textContent = '⚡ Merge Now'; }
+    }
+}
 
 function revealVideoPlayer() {
     const player = document.getElementById('video-output-player');

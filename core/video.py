@@ -9,8 +9,7 @@
 #   5. Merge all segments + mux with audio → final MP4
 # ============================================================
 
-from __future__ import annotations
-
+import json
 import os
 import re
 import shutil
@@ -83,6 +82,80 @@ def extract_keyword(text: str, mode: str = "rake", api_key: str = "") -> str:
     if mode == "gemini" and api_key:
         return _gemini_keyword(text, api_key)
     return _rake_keyword(text)
+
+
+def extract_subclip_keywords(text: str, n_subs: int, mode: str = "rake", api_key: str = "") -> list[str]:
+    """
+    Extract exactly n_subs keywords sequentially representing the timeline of the text.
+    For example, if text is "First we do A, then B occurs, finally C happens" and n_subs=3,
+    returns ["A", "B", "C"] matching the sequence of visual beats.
+    """
+    if n_subs <= 1:
+        return [extract_keyword(text, mode, api_key)]
+
+    # 1. Try Gemini if enabled
+    if mode == "gemini" and api_key:
+        try:
+            from google import genai
+            client = genai.Client(api_key=api_key)
+            prompt = (
+                f"You are a professional YouTube video editor. I have a narration script chunk:\n"
+                f"\"{text}\"\n\n"
+                f"This chunk will be split into exactly {n_subs} sequential video clips. "
+                f"Please extract exactly {n_subs} search queries (each 2-4 words long) in order, "
+                f"matching the sequence of visual ideas spoken in the script. "
+                f"Each query must be visual and suitable for stock video sites like Pexels.\n"
+                f"Return ONLY a JSON list of strings, e.g. [\"query1\", \"query2\"]. No other text or markdown."
+            )
+            models = ["gemini-2.5-flash", "gemini-2.0-flash-001", "gemini-2.0-flash"]
+            for model in models:
+                try:
+                    response = client.models.generate_content(
+                        model=model,
+                        contents=prompt,
+                    )
+                    content = response.text.strip()
+                    if content.startswith("```"):
+                        lines = content.splitlines()
+                        if lines[0].startswith("```json") or lines[0].startswith("```"):
+                            content = "\n".join(lines[1:-1]).strip()
+                    kws = json.loads(content)
+                    if isinstance(kws, list) and len(kws) == n_subs:
+                        return [str(k).strip() for k in kws]
+                except Exception:
+                    continue
+        except Exception as e:
+            print(f"  ⚠ Gemini subclip keyword extraction failed: {e}")
+
+    # 2. Offline fallback (RAKE / simple splitting)
+    clauses = [c.strip() for c in re.split(r'[.,;!?]', text) if c.strip()]
+    if not clauses:
+        clauses = [text]
+
+    kws = []
+    if len(clauses) >= n_subs:
+        chunk_size = len(clauses) / n_subs
+        for i in range(n_subs):
+            start = int(i * chunk_size)
+            end = int((i + 1) * chunk_size) if i < n_subs - 1 else len(clauses)
+            sub_text = " ".join(clauses[start:end])
+            kws.append(extract_keyword(sub_text, mode="rake"))
+    else:
+        words = text.split()
+        if words:
+            word_chunk = len(words) / n_subs
+            for i in range(n_subs):
+                start = int(i * word_chunk)
+                end = int((i + 1) * word_chunk) if i < n_subs - 1 else len(words)
+                sub_text = " ".join(words[start:end])
+                kws.append(extract_keyword(sub_text, mode="rake"))
+        else:
+            kws.append(text)
+
+    # Ensure we return exactly n_subs keywords
+    while len(kws) < n_subs:
+        kws.append(kws[-1] if kws else "broll video")
+    return kws[:n_subs]
 
 
 # ── Media search — Videos ────────────────────────────────────
@@ -397,6 +470,7 @@ def _get_duration_secs(path: str) -> float:
                 path,
             ],
             capture_output=True, text=True,
+            timeout=10,
         )
         return float(result.stdout.strip())
     except Exception:
@@ -421,22 +495,26 @@ def image_to_video(
         f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
         f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black"
     )
-    result = subprocess.run(
-        [
-            "ffmpeg", "-y",
-            "-loop", "1",
-            "-i", img_path,
-            "-vf", vf,
-            "-t", str(duration),
-            "-pix_fmt", "yuv420p",
-            "-c:v", "libx264",
-            "-preset", "fast",
-            "-crf", "23",
-            out_path,
-        ],
-        capture_output=True,
-    )
-    return result.returncode == 0
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg", "-y",
+                "-loop", "1",
+                "-i", img_path,
+                "-vf", vf,
+                "-t", str(duration),
+                "-pix_fmt", "yuv420p",
+                "-c:v", "libx264",
+                "-preset", "ultrafast",
+                "-crf", "28",
+                out_path,
+            ],
+            capture_output=True,
+            timeout=120,
+        )
+        return result.returncode == 0
+    except subprocess.TimeoutExpired:
+        return False
 
 
 def _scale_clip(src: str, dst: str, resolution: str, fps: int) -> bool:
@@ -447,17 +525,21 @@ def _scale_clip(src: str, dst: str, resolution: str, fps: int) -> bool:
         f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black,"
         f"fps={fps}"
     )
-    r = subprocess.run(
-        [
-            "ffmpeg", "-y",
-            "-i", src,
-            "-vf", scale_filter,
-            "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-            "-an", dst,
-        ],
-        capture_output=True,
-    )
-    return r.returncode == 0
+    try:
+        r = subprocess.run(
+            [
+                "ffmpeg", "-y",
+                "-i", src,
+                "-vf", scale_filter,
+                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
+                "-an", dst,
+            ],
+            capture_output=True,
+            timeout=120,
+        )
+        return r.returncode == 0
+    except subprocess.TimeoutExpired:
+        return False
 
 
 def fill_video_segment(
@@ -499,11 +581,15 @@ def fill_video_segment(
             part_scaled = os.path.join(tmp_dir, f"p{ci}.mp4")
 
             # Trim the raw clip to `take` seconds
-            subprocess.run(
-                ["ffmpeg", "-y", "-i", raw, "-t", str(take),
-                 "-c", "copy", part_raw],
-                capture_output=True,
-            )
+            try:
+                subprocess.run(
+                    ["ffmpeg", "-y", "-i", raw, "-t", str(take),
+                     "-c", "copy", part_raw],
+                    capture_output=True,
+                    timeout=60,
+                )
+            except subprocess.TimeoutExpired:
+                continue
             if not os.path.exists(part_raw):
                 continue
 
@@ -521,16 +607,20 @@ def fill_video_segment(
                 loops_needed = int(remaining / last_dur) + 2
                 loop_raw = os.path.join(tmp_dir, "loop_raw.mp4")
                 loop_scaled = os.path.join(tmp_dir, "loop.mp4")
-                subprocess.run(
-                    [
-                        "ffmpeg", "-y",
-                        "-stream_loop", str(loops_needed),
-                        "-i", last_raw,
-                        "-t", str(remaining),
-                        "-c", "copy", loop_raw,
-                    ],
-                    capture_output=True,
-                )
+                try:
+                    subprocess.run(
+                        [
+                            "ffmpeg", "-y",
+                            "-stream_loop", str(loops_needed),
+                            "-i", last_raw,
+                            "-t", str(remaining),
+                            "-c", "copy", loop_raw,
+                        ],
+                        capture_output=True,
+                        timeout=60,
+                    )
+                except subprocess.TimeoutExpired:
+                    pass
                 if os.path.exists(loop_raw) and _scale_clip(loop_raw, loop_scaled, resolution, fps):
                     parts.append(loop_scaled)
 
@@ -549,18 +639,22 @@ def fill_video_segment(
             for p in parts:
                 f.write(f"file '{os.path.abspath(p)}'\n")
 
-        r = subprocess.run(
-            [
-                "ffmpeg", "-y",
-                "-f", "concat", "-safe", "0",
-                "-i", concat_txt,
-                "-t", str(duration),
-                "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                "-an", out_path,
-            ],
-            capture_output=True,
-        )
-        return r.returncode == 0
+        try:
+            r = subprocess.run(
+                [
+                    "ffmpeg", "-y",
+                    "-f", "concat", "-safe", "0",
+                    "-i", concat_txt,
+                    "-t", str(duration),
+                    "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
+                    "-an", out_path,
+                ],
+                capture_output=True,
+                timeout=180,
+            )
+            return r.returncode == 0
+        except subprocess.TimeoutExpired:
+            return False
 
     finally:
         import shutil as _sh
@@ -588,23 +682,41 @@ def create_color_segment(
 ) -> bool:
     """Generate a solid-color video segment as a last-resort fallback."""
     w, h = resolution.split("x")
-    result = subprocess.run(
-        [
-            "ffmpeg", "-y",
-            "-f", "lavfi",
-            "-i", f"color=c={color}:size={w}x{h}:rate={fps}",
-            "-t", str(duration),
-            "-c:v", "libx264",
-            "-preset", "fast",
-            "-crf", "23",
-            out_path,
-        ],
-        capture_output=True,
-    )
-    return result.returncode == 0
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg", "-y",
+                "-f", "lavfi",
+                "-i", f"color=c={color}:size={w}x{h}:rate={fps}",
+                "-t", str(duration),
+                "-c:v", "libx264",
+                "-preset", "ultrafast",
+                "-crf", "28",
+                out_path,
+            ],
+            capture_output=True,
+            timeout=30,
+        )
+        return result.returncode == 0
+    except subprocess.TimeoutExpired:
+        return False
 
 
 # ── Segment builder (one chunk → one .mp4 segment) ──────────
+
+
+def _vary_keyword(keyword: str, sub_index: int) -> str:
+    """
+    Return a slightly varied keyword for a sub-clip to encourage different
+    footage being returned. Uses the original keyword but shuffles word order
+    or adds common visual adjectives on alternating passes.
+    """
+    words = keyword.split()
+    if sub_index == 0 or len(words) <= 1:
+        return keyword
+    # Rotate words so "office worker typing" becomes "typing office worker" etc.
+    rotated = words[sub_index % len(words):] + words[:sub_index % len(words)]
+    return " ".join(rotated)
 
 
 def build_segment(
@@ -621,10 +733,16 @@ def build_segment(
     resolution: str = "1920x1080",
     fps: int = 30,
     segments_dir: str = "outputs/video/segments",
+    clip_interval: float = 0.0,
     progress_cb=None,
 ) -> dict:
     """
     Build one video segment for a script chunk.
+
+    If clip_interval > 0 and duration > clip_interval, the segment is split
+    into sub-clips of up to clip_interval seconds each. Each sub-clip searches
+    for a DIFFERENT video clip, giving visual variety for long narration chunks.
+
     Returns a result dict with keys: index, keyword, source, type, path, ok.
     """
 
@@ -650,38 +768,154 @@ def build_segment(
 
     raw_dir = os.path.join(segments_dir, "raw")
     os.makedirs(raw_dir, exist_ok=True)
-    raw_video = os.path.join(raw_dir, f"raw_{index:04d}_video")
     raw_image = os.path.join(raw_dir, f"raw_{index:04d}_image")
 
-    # ── 3. Search for video clips (multi-clip fill for long chunks) ───────
-    MAX_CLIPS = 5          # max different clips to fetch per chunk
-    CLIP_TARGET = 15.0     # try to get clips of ~15 s each
-
     # Derive orientation from resolution for search APIs
-    _orient = _orientation_from_resolution(resolution)   # 'portrait' / 'landscape' / 'square'
+    _orient = _orientation_from_resolution(resolution)
 
-    providers_video = []
-    if pexels_key:
-        providers_video.append(("Pexels",   lambda k, _o=_orient: _search_pexels_video(k, pexels_key, _o)))
-    if pixabay_key:
-        providers_video.append(("Pixabay",  lambda k, _o=_orient: _search_pixabay_video(k, pixabay_key, _o)))
-    if coverr_key:
-        providers_video.append(("Coverr",   lambda k: _search_coverr_video(k, coverr_key)))
-    providers_video.append(("Wikimedia", _search_wikimedia_video))
+    # ── Helper: build provider lists ─────────────────────────
+    def _make_video_providers():
+        providers = []
+        if pexels_key:
+            providers.append(("Pexels",   lambda k, _o=_orient: _search_pexels_video(k, pexels_key, _o)))
+        if pixabay_key:
+            providers.append(("Pixabay",  lambda k, _o=_orient: _search_pixabay_video(k, pixabay_key, _o)))
+        if coverr_key:
+            providers.append(("Coverr",   lambda k: _search_coverr_video(k, coverr_key)))
+        providers.append(("Wikimedia", _search_wikimedia_video))
+        return providers
 
-    # Build a set of search terms: primary keyword + word-level fallbacks
+    def _make_image_providers():
+        providers = []
+        if pexels_key:
+            providers.append(("Pexels",  lambda k, _o=_orient: _search_pexels_image(k, pexels_key, _o)))
+        if pixabay_key:
+            providers.append(("Pixabay", lambda k, _o=_orient: _search_pixabay_image(k, pixabay_key, _o)))
+        providers.append(("Wikimedia", _search_wikimedia_image))
+        return providers
+
+    # ── Helper: search + download one clip for a given keyword ──
+    def _fetch_one_clip(kw: str, raw_path: str) -> tuple[str | None, str | None]:
+        """Try all video providers for kw. Returns (path, source_name) or (None, None)."""
+        kw_words = kw.split()
+        terms = [kw]
+        if len(kw_words) >= 2:
+            terms.append(" ".join(kw_words[:2]))
+        terms.append(kw_words[0])
+        seen_t: set = set()
+        terms = [t for t in terms if not (t in seen_t or seen_t.add(t))]
+
+        for term in terms:
+            for name, searcher in _make_video_providers():
+                url = searcher(term)
+                if not url:
+                    continue
+                if download_media(url, raw_path):
+                    if _get_duration_secs(raw_path) > 0:
+                        return raw_path, name
+        return None, None
+
+    # ── 3. Decide strategy: sub-clip splitting vs. single fill ──
+
+    use_subclips = clip_interval > 0 and duration > clip_interval
+
+    if use_subclips:
+        # Split duration into N sub-clips of up to clip_interval seconds each
+        n_subs = max(1, int(duration / clip_interval) + (1 if duration % clip_interval > 0.5 else 0))
+        sub_dur = duration / n_subs   # distribute evenly to avoid tiny last clip
+        _emit(f"⏱ Clip interval {clip_interval:.0f}s → {n_subs} sub-clips of {sub_dur:.1f}s each")
+
+        # Extract sequential keywords matching the different parts of the script
+        sub_kws = extract_subclip_keywords(text, n_subs, mode=keyword_mode, api_key=gemini_key)
+        _emit(f"🔑 Sub-clip keywords: {', '.join([f'«{k}»' for k in sub_kws])}")
+
+        sub_parts = []     # paths of finished sub-clip segment files
+        all_sources: list[str] = []
+        tmp_sub_dir = out_path + "_subs"
+        os.makedirs(tmp_sub_dir, exist_ok=True)
+
+        try:
+            for si in range(n_subs):
+                varied_kw = sub_kws[si]
+                raw_path = os.path.join(raw_dir, f"raw_{index:04d}_sub{si}.mp4")
+                sub_out  = os.path.join(tmp_sub_dir, f"sub_{si:04d}.mp4")
+
+                _emit(f"🎬 Sub-clip {si+1}/{n_subs} — searching «{varied_kw}»…")
+                clip_path, src_name = _fetch_one_clip(varied_kw, raw_path)
+
+                if clip_path:
+                    _emit(f"⬇ Filling sub-clip {si+1} ({sub_dur:.1f}s) from {src_name}…")
+                    ok_sub = fill_video_segment([clip_path], sub_out, sub_dur, resolution, fps)
+                    if ok_sub:
+                        sub_parts.append(sub_out)
+                        all_sources.append(src_name)
+                        _emit(f"✓ Sub-clip {si+1} done ({src_name})")
+                        continue
+
+                # Fallback: try image for this sub-clip
+                _emit(f"🖼 Sub-clip {si+1}: trying image fallback…")
+                img_raw = os.path.join(raw_dir, f"raw_{index:04d}_sub{si}_img.jpg")
+                for name, searcher in _make_image_providers():
+                    url = searcher(varied_kw)
+                    if url and download_media(url, img_raw):
+                        ok_img = image_to_video(img_raw, sub_out, sub_dur, resolution, fps)
+                        if ok_img:
+                            sub_parts.append(sub_out)
+                            all_sources.append(f"{name}(img)")
+                            break
+                else:
+                    # Last resort: solid color for this sub-clip
+                    create_color_segment(sub_out, sub_dur, resolution, fps)
+                    sub_parts.append(sub_out)
+                    all_sources.append("fallback")
+
+            if sub_parts:
+                _emit(f"✂ Concatenating {len(sub_parts)} sub-clips…")
+                # Concat all sub-parts into the final segment
+                concat_txt = os.path.join(tmp_sub_dir, "concat.txt")
+                with open(concat_txt, "w") as f:
+                    for p in sub_parts:
+                        f.write(f"file '{os.path.abspath(p)}'\n")
+                try:
+                    r = subprocess.run(
+                        ["ffmpeg", "-y", "-f", "concat", "-safe", "0",
+                         "-i", concat_txt,
+                         "-t", str(duration),
+                         "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
+                         "-an", out_path],
+                        capture_output=True,
+                        timeout=180,
+                    )
+                except subprocess.TimeoutExpired:
+                    r = None
+                if r and r.returncode == 0:
+                    sources_label = "+".join(dict.fromkeys(all_sources))
+                    result.update(source=sources_label, type="video", ok=True, keyword=", ".join(sub_kws))
+                    return result
+
+        finally:
+            import shutil as _sh
+            if os.path.isdir(tmp_sub_dir):
+                _sh.rmtree(tmp_sub_dir, ignore_errors=True)
+
+        _emit("⚠ Sub-clip strategy failed, falling back to single-clip fill…")
+
+    # ── 4. Single-clip fill strategy (original behaviour) ────
+    MAX_CLIPS = 5
+
+    providers_video = _make_video_providers()
+
     kw_words = keyword.split()
     search_terms = [keyword]
     if len(kw_words) >= 2:
         search_terms.append(" ".join(kw_words[:2]))
     search_terms.append(kw_words[0])
-    # De-duplicate while preserving order
-    seen = set()
-    search_terms = [t for t in search_terms if not (t in seen or seen.add(t))]
+    seen_s: set = set()
+    search_terms = [t for t in search_terms if not (t in seen_s or seen_s.add(t))]
 
-    raw_clips = []         # list of downloaded raw file paths
-    covered  = 0.0         # seconds covered by downloaded clips
-    source_names = []
+    raw_clips: list[str] = []
+    covered   = 0.0
+    source_names: list[str] = []
 
     for term in search_terms:
         if covered >= duration or len(raw_clips) >= MAX_CLIPS:
@@ -704,9 +938,9 @@ def build_segment(
                     source_names.append(name)
                     _emit(f"✓ Clip {clip_idx+1}: {clip_dur:.1f}s from {name} (total {covered:.1f}s / need {duration:.1f}s)")
 
-    # ── 4. Stitch clips → exact-duration segment ──────────────
+    # ── 5. Stitch clips → exact-duration segment ──────────────
     if raw_clips:
-        clips_label = "+".join(dict.fromkeys(source_names))  # e.g. "Pexels+Pixabay"
+        clips_label = "+".join(dict.fromkeys(source_names))
         n = len(raw_clips)
         _emit(f"✂ Filling {duration:.1f}s from {n} clip{'s' if n>1 else ''} ({clips_label})…")
         ok = fill_video_segment(raw_clips, out_path, duration, resolution, fps)
@@ -715,16 +949,10 @@ def build_segment(
             return result
         _emit("⚠ Video fill failed, trying image fallback…")
 
-    # ── 5. Fallback: search for image ─────────────────────────
+    # ── 6. Fallback: search for image ─────────────────────────
     image_url = None
-    providers_image = []
-    if pexels_key:
-        providers_image.append(("Pexels",  lambda k, _o=_orient: _search_pexels_image(k, pexels_key, _o)))
-    if pixabay_key:
-        providers_image.append(("Pixabay", lambda k, _o=_orient: _search_pixabay_image(k, pixabay_key, _o)))
-    providers_image.append(("Wikimedia", _search_wikimedia_image))
-
-    for name, searcher in providers_image:
+    source_name = "fallback"
+    for name, searcher in _make_image_providers():
         _emit(f"🖼 Searching {name} image…")
         url = searcher(keyword)
         if url:
@@ -738,7 +966,7 @@ def build_segment(
                 source_name = f"{name} (image)"
                 break
 
-    # ── 6. Process image → video ──────────────────────────────
+    # ── 7. Process image → video ──────────────────────────────
     if image_url:
         _emit(f"🎞 Converting image to video ({duration:.1f}s, Ken Burns)…")
         ok = image_to_video(image_url, out_path, duration, resolution, fps)
@@ -747,7 +975,7 @@ def build_segment(
             return result
         _emit("⚠ Image conversion failed, using color fallback…")
 
-    # ── 7. Last resort: solid color ───────────────────────────
+    # ── 8. Last resort: solid color ───────────────────────────
     _emit("⬛ Generating solid-color fallback…")
     ok = create_color_segment(out_path, duration, resolution, fps)
     result.update(source="fallback", type="color", ok=ok)
@@ -784,16 +1012,21 @@ def merge_segments_with_audio(
             for p in segment_paths:
                 f.write(f"file '{os.path.abspath(p)}'\n")
 
-        r = subprocess.run(
-            [
-                "ffmpeg", "-y",
-                "-f", "concat", "-safe", "0",
-                "-i", concat_file,
-                "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                raw_concat,
-            ],
-            capture_output=True,
-        )
+        try:
+            r = subprocess.run(
+                [
+                    "ffmpeg", "-y",
+                    "-f", "concat", "-safe", "0",
+                    "-i", concat_file,
+                    "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
+                    raw_concat,
+                ],
+                capture_output=True,
+                timeout=600,
+            )
+        except subprocess.TimeoutExpired:
+            print("  ✗ Concat timed out")
+            return False
         if r.returncode != 0:
             print("  ✗ Concat failed:", r.stderr.decode()[-400:])
             return False
@@ -807,40 +1040,46 @@ def merge_segments_with_audio(
         if audio_dur > 0 and video_dur > 0 and video_dur < audio_dur - 0.5:
             # Pad with a freeze of the last frame to match audio length
             extra = audio_dur - video_dur + 0.5   # small buffer
-            r2 = subprocess.run(
-                [
-                    "ffmpeg", "-y",
-                    "-i", raw_concat,
-                    "-vf", f"tpad=stop_mode=clone:stop_duration={extra:.3f}",
-                    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                    "-an", padded_vid,
-                ],
-                capture_output=True,
-            )
-            if r2.returncode == 0:
+            try:
+                r2 = subprocess.run(
+                    [
+                        "ffmpeg", "-y",
+                        "-i", raw_concat,
+                        "-vf", f"tpad=stop_mode=clone:stop_duration={extra:.3f}",
+                        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
+                        "-an", padded_vid,
+                    ],
+                    capture_output=True,
+                    timeout=120,
+                )
+            except subprocess.TimeoutExpired:
+                r2 = None
+            if r2 and r2.returncode == 0:
                 mux_src = padded_vid
             else:
-                print("  ⚠ Freeze-pad failed, using unpadded video:",
-                      r2.stderr.decode()[-200:])
+                print("  ⚠ Freeze-pad failed/timed-out, using unpadded video")
 
         # ── Step 3: Mux audio — full audio duration guaranteed ─
-        r3 = subprocess.run(
-            [
-                "ffmpeg", "-y",
-                "-i", mux_src,
-                "-i", audio_path,
-                "-c:v", "copy",
-                "-c:a", "aac",
-                "-b:a", "192k",
-                "-map", "0:v:0",
-                "-map", "1:a:0",
-                # No -shortest: audio is the master track
-                # Use -t to cap at audio duration (avoids freeze tail overflow)
-                "-t", str(audio_dur) if audio_dur > 0 else "99999",
-                output_path,
-            ],
-            capture_output=True,
-        )
+        try:
+            r3 = subprocess.run(
+                [
+                    "ffmpeg", "-y",
+                    "-i", mux_src,
+                    "-i", audio_path,
+                    "-c:v", "copy",
+                    "-c:a", "aac",
+                    "-b:a", "192k",
+                    "-map", "0:v:0",
+                    "-map", "1:a:0",
+                    "-t", str(audio_dur) if audio_dur > 0 else "99999",
+                    output_path,
+                ],
+                capture_output=True,
+                timeout=120,
+            )
+        except subprocess.TimeoutExpired:
+            print("  ✗ Audio mux timed out")
+            return False
         if r3.returncode != 0:
             print("  ✗ Audio mux failed:", r3.stderr.decode()[-400:])
             return False

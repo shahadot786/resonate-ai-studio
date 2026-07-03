@@ -94,3 +94,11 @@ VIDEO_OUTPUT_FILE   = "outputs/video/final_video.mp4"
 
 # Keyword extraction mode: "rake" (offline) or "gemini" (free AI Studio key)
 KEYWORD_MODE        = "gemini"  # using Gemini 2.5 Flash (free tier)
+
+# Clip interval: force a new clip search every N seconds within a long segment.
+# Set to 0 to disable (one clip per chunk, looped if needed).
+VIDEO_CLIP_INTERVAL = 10
+
+# Review before merge: pause pipeline after all clips are found so you can
+# preview and replace clips before the final video is assembled.
+VIDEO_REVIEW_BEFORE_MERGE = True
