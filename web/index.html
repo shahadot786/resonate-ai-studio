@@ -345,19 +345,11 @@
                     <!-- Live segment chips -->
                     <div class="video-chip-row" id="video-chip-row"></div>
 
-                    <!-- Pre-Merge Review Panel -->
-                    <div class="review-panel hidden" id="review-panel">
-                        <div class="review-panel-header">
-                            <div class="review-panel-title-row">
-                                <span class="review-panel-icon">🎞</span>
-                                <div>
-                                    <h3 class="review-panel-title">Review Before Merge</h3>
-                                    <p class="review-panel-sub">Preview each clip. Replace any before final assembly.</p>
-                                </div>
-                            </div>
-                            <button class="btn btn-primary btn-merge-now" id="btn-merge-now">⚡ Merge Now</button>
-                        </div>
-                        <div class="review-clips-grid" id="review-clips-grid"></div>
+                    <!-- Open Review Trigger Button -->
+                    <div class="review-trigger-row hidden" id="review-trigger-row" style="margin-top: 10px;">
+                        <button class="btn btn-primary" id="btn-open-review-drawer" style="width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px;">
+                            <span>📋 Open Review Panel (70% Wide)</span>
+                        </button>
                     </div>
 
                     <!-- Final video player -->
@@ -397,6 +389,26 @@
         <div class="history-empty hidden" id="history-empty">
             <div class="history-empty-icon">🎤</div>
             <div class="history-empty-msg">No generations yet.<br>Run a generation and it will appear here.</div>
+        </div>
+    </aside>
+
+    <!-- ══════════ B-ROLL REVIEW DRAWER (70% WIDE) ══════════ -->
+    <div class="review-backdrop hidden" id="review-backdrop"></div>
+    <aside class="review-drawer hidden" id="review-drawer">
+        <div class="review-drawer-header">
+            <div class="review-drawer-title-row">
+                <div>
+                    <h2 class="review-drawer-title">🎞 Review Clips Before Merge</h2>
+                    <p class="review-drawer-sub">Preview each clip, adjust keywords to re-search, or upload custom B-roll files before the final render.</p>
+                </div>
+                <div style="display:flex;align-items:center;gap:12px;">
+                    <button class="btn btn-primary btn-merge-now" id="btn-merge-now">⚡ Merge Now</button>
+                    <button class="modal-close-btn" id="review-drawer-close">✕</button>
+                </div>
+            </div>
+        </div>
+        <div class="review-clips-grid" id="review-clips-grid">
+            <!-- clip cards injected by JS -->
         </div>
     </aside>
 

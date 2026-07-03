@@ -907,6 +907,9 @@ function setupEventListeners() {
 
     // ── VIDEO PREVIEW MODAL ──────────────────────────────────
     setupVideoPreviewModal();
+
+    // ── B-ROLL REVIEW DRAWER ──────────────────────────────────
+    setupReviewDrawer();
 }
 
 // ============================================================
@@ -1083,24 +1086,42 @@ function handleVideoProgress(data) {
         segments_done.forEach(seg => renderChip(seg));
     }
 
-    // Review Ready — show the Review Panel, keep merge button visible
+    // Review Ready — open the Review Drawer (70% wide), show trigger button
     if (status === 'review_ready') {
         document.getElementById('video-progress-bar').style.width = '100%';
         buildReviewPanel(segments_done || []);
-        const reviewPanel = document.getElementById('review-panel');
-        if (reviewPanel) reviewPanel.classList.remove('hidden');
+        
+        // Show the review trigger button so the user can re-open it
+        const triggerRow = document.getElementById('review-trigger-row');
+        if (triggerRow) triggerRow.classList.remove('hidden');
+
+        // Automatically open the drawer on initial transition
+        const drawer = document.getElementById('review-drawer');
+        const backdrop = document.getElementById('review-backdrop');
+        if (drawer && backdrop && drawer.classList.contains('hidden')) {
+            drawer.classList.remove('hidden');
+            backdrop.classList.remove('hidden');
+        }
+
         // Hide final player until merge is done
         document.getElementById('video-output-player').classList.add('hidden');
     } else {
-        const reviewPanel = document.getElementById('review-panel');
-        if (reviewPanel && status !== 'review_ready') reviewPanel.classList.add('hidden');
+        const triggerRow = document.getElementById('review-trigger-row');
+        if (triggerRow) triggerRow.classList.add('hidden');
+        
+        const drawer = document.getElementById('review-drawer');
+        const backdrop = document.getElementById('review-backdrop');
+        if (drawer && status !== 'review_ready') drawer.classList.add('hidden');
+        if (backdrop && status !== 'review_ready') backdrop.classList.add('hidden');
     }
 
-    // Done — show video player
+    // Done — show video player, hide review
     if (status === 'done') {
         document.getElementById('video-progress-bar').style.width = '100%';
-        const reviewPanel = document.getElementById('review-panel');
-        if (reviewPanel) reviewPanel.classList.add('hidden');
+        const drawer = document.getElementById('review-drawer');
+        const backdrop = document.getElementById('review-backdrop');
+        if (drawer) drawer.classList.add('hidden');
+        if (backdrop) backdrop.classList.add('hidden');
         revealVideoPlayer();
     }
 }
@@ -1442,8 +1463,10 @@ async function triggerMerge(btn) {
             if (btn) { btn.disabled = false; btn.textContent = '⚡ Merge Now'; }
         } else {
             showToast('Merging… final video coming soon!', 'ok');
-            const reviewPanel = document.getElementById('review-panel');
-            if (reviewPanel) reviewPanel.classList.add('hidden');
+            const drawer = document.getElementById('review-drawer');
+            const backdrop = document.getElementById('review-backdrop');
+            if (drawer) drawer.classList.add('hidden');
+            if (backdrop) backdrop.classList.add('hidden');
         }
     } catch (e) {
         showToast('Network error triggering merge', 'err');
@@ -2198,4 +2221,36 @@ function initHistoryDrawer() {
 
     // Auto-refresh history badge on page load
     loadHistory();
+}
+
+// ── B-Roll Review Drawer (70% Wide) ──────────────────────────
+
+function setupReviewDrawer() {
+    const openBtn  = document.getElementById('btn-open-review-drawer');
+    const closeBtn = document.getElementById('review-drawer-close');
+    const drawer   = document.getElementById('review-drawer');
+    const backdrop = document.getElementById('review-backdrop');
+
+    if (!drawer || !backdrop) return;
+
+    function openDrawer() {
+        drawer.classList.remove('hidden');
+        backdrop.classList.remove('hidden');
+    }
+
+    function closeDrawer() {
+        drawer.classList.add('hidden');
+        backdrop.classList.add('hidden');
+    }
+
+    if (openBtn) openBtn.addEventListener('click', openDrawer);
+    if (closeBtn) closeBtn.addEventListener('click', closeDrawer);
+    backdrop.addEventListener('click', closeDrawer);
+
+    // Keyboard ESC to close
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && !drawer.classList.contains('hidden')) {
+            closeDrawer();
+        }
+    });
 }

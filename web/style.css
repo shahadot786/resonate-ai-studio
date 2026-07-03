@@ -2384,22 +2384,24 @@ input[type="range"]::-webkit-slider-thumb:hover {
 
 /* ── Clip Card Grid ── */
 .review-clips-grid {
-  display: flex;
-  gap: 14px;
-  padding: 16px 20px 20px;
-  overflow-x: auto;
-  scrollbar-width: thin;
-  scrollbar-color: #2a2a2a transparent;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 16px;
+  padding: 24px;
+  overflow-y: auto;
+  flex: 1;
 }
 
 .review-clip-card {
-  flex: 0 0 220px;
+  width: 100%;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: #111;
   overflow: hidden;
   transition: border-color 0.2s ease, transform 0.15s ease;
   position: relative;
+  display: flex;
+  flex-direction: column;
 }
 .review-clip-card:hover {
   border-color: rgba(124,157,255,0.4);
@@ -2712,5 +2714,67 @@ input[type="range"]::-webkit-slider-thumb:hover {
   color: var(--text-muted);
   font-style: italic;
   margin-top: -4px;
+}
+
+/* ============================================================
+   B-ROLL REVIEW DRAWER — slide-in overlay (70% wide)
+   ============================================================ */
+.review-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 8990;
+  background: rgba(0,0,0,0.55);
+  backdrop-filter: blur(3px);
+  transition: opacity 0.2s ease;
+}
+.review-backdrop.hidden { display: none; }
+
+.review-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 8991;
+  width: 70vw;
+  max-width: 95vw;
+  background: #121212;
+  border-left: 1px solid #222;
+  display: flex;
+  flex-direction: column;
+  box-shadow: -24px 0 80px rgba(0,0,0,0.6);
+  animation: review-drawer-slide-in 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+  overflow: hidden;
+}
+.review-drawer.hidden { display: none; }
+
+@keyframes review-drawer-slide-in {
+  from { transform: translateX(100%); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+
+.review-drawer-header {
+  padding: 20px 24px;
+  border-bottom: 1px solid #1f1f1f;
+  flex-shrink: 0;
+  background: #141414;
+}
+
+.review-drawer-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.review-drawer-title {
+  font-size: 1.15rem;
+  font-weight: 750;
+  letter-spacing: -0.02em;
+  color: var(--text-white);
+}
+
+.review-drawer-sub {
+  font-size: 0.78rem;
+  color: var(--text-grey);
+  margin-top: 4px;
 }
 
