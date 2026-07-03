@@ -480,6 +480,22 @@
                     </div>
                 </div>
                 <p class="vpreview-hint">Video clip + narration audio playing in sync</p>
+
+                <!-- Change clip feature inside preview modal -->
+                <div class="vpreview-change-section" id="vpreview-change-section" style="width: 100%; border-top: 1px solid var(--border); padding-top: 16px; margin-top: 8px; display: flex; flex-direction: column; gap: 10px;">
+                    <div style="font-weight: 600; font-size: 0.85rem; color: var(--text-white);">🔄 Change This Clip</div>
+                    <div style="display: flex; gap: 10px; align-items: center;">
+                        <input type="text" id="vpreview-change-kw" placeholder="New search keyword..." style="flex: 1; background: var(--bg-input); border: 1px solid #2a2a2a; border-radius: 6px; padding: 8px 12px; font-size: 0.85rem; color: var(--text-white); outline: none;">
+                        <button class="btn btn-primary" id="btn-vpreview-research" style="background: rgba(124, 157, 255, 0.15); border-color: #7c9dff; color: #7c9dff; font-size: 0.82rem; padding: 8px 16px; font-weight: 600;">🔍 Re-search</button>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 4px;">
+                        <label for="vpreview-change-upload" style="font-size: 0.78rem; color: var(--text-grey); cursor: pointer; border: 1px dashed var(--border); padding: 6px 12px; border-radius: 6px; display: inline-flex; align-items: center; gap: 6px;">
+                            📁 Upload Custom Clip
+                        </label>
+                        <input type="file" id="vpreview-change-upload" accept="video/*" style="display: none;">
+                        <span id="vpreview-change-status" style="font-size: 0.78rem; color: var(--warning); display: none;">🔄 Rebuilding segment...</span>
+                    </div>
+                </div>
             </div>
         </div>
     </div>

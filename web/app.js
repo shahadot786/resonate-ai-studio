@@ -75,6 +75,7 @@ const DOM = {
 
 let activePlayingChunk = null;
 let sseSource = null;
+let _previewSegIndex = -1;
 
 // ── PIPELINE MODE STATE ──
 // 'audio' | 'both' | 'video'
@@ -1179,6 +1180,8 @@ function showVideoPreviewModal(seg) {
     const meta   = document.getElementById('vpreview-meta');
     if (!modal || !player || !audio) return;
 
+    _previewSegIndex = seg.index;
+
     title.textContent = `Segment #${seg.index + 1} — ${seg.keyword || 'clip'}`;
     meta.textContent  = `Source: ${seg.source || '?'} · Type: ${seg.type || '?'}${seg.time ? ' · ' + seg.time : ''}`;
     
@@ -1191,6 +1194,12 @@ function showVideoPreviewModal(seg) {
     const padIndex = String(seg.index).padStart(4, '0');
     audio.src = `/api/audio/chunk/chunk_${padIndex}.wav?t=${Date.now()}`;
     audio.load();
+
+    // Populate Change section
+    const kwInput = document.getElementById('vpreview-change-kw');
+    if (kwInput) kwInput.value = seg.keyword || '';
+    const statusLabel = document.getElementById('vpreview-change-status');
+    if (statusLabel) { statusLabel.style.display = 'none'; statusLabel.textContent = ''; }
 
     // Reset controls UI
     const playBtn = document.getElementById('vpreview-play-btn');
@@ -1302,6 +1311,113 @@ function setupVideoPreviewModal() {
             audio.volume = vol.value;
         });
     }
+
+    // ── Change Clip actions inside Preview Modal ──
+    const researchBtn = document.getElementById('btn-vpreview-research');
+    const kwInput = document.getElementById('vpreview-change-kw');
+    const uploadInput = document.getElementById('vpreview-change-upload');
+    const statusLabel = document.getElementById('vpreview-change-status');
+
+    async function handleModalResearch() {
+        if (_previewSegIndex === -1) return;
+        const keyword = kwInput ? kwInput.value.trim() : '';
+        if (!keyword) { showToast('Enter a search keyword first', 'err'); return; }
+
+        pauseAll();
+        if (researchBtn) researchBtn.disabled = true;
+        if (statusLabel) { statusLabel.textContent = '🔄 Rebuilding segment...'; statusLabel.style.display = 'inline'; }
+
+        try {
+            const res = await fetch(`/api/video/segments/${_previewSegIndex}/replace`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ keyword })
+            });
+            const data = await res.json();
+            if (data.ok) {
+                showToast(`Segment ${_previewSegIndex + 1} rebuilt ✓`, 'ok');
+                
+                // Reload preview video player
+                player.src = `/api/video/segments/${_previewSegIndex}?t=${Date.now()}`;
+                player.load();
+
+                // Sync the corresponding card in the review grid if loaded
+                const card = document.getElementById(`rcc-${_previewSegIndex}`);
+                if (card) {
+                    card.classList.remove('replacing');
+                    card.classList.add('replaced');
+                    const thumbVid = card.querySelector('.rcc-thumb video');
+                    if (thumbVid) {
+                        thumbVid.src = `/api/video/segments/${_previewSegIndex}?t=${Date.now()}`;
+                        thumbVid.load();
+                    }
+                    const kwEl = card.querySelector('.rcc-keyword');
+                    if (kwEl) kwEl.textContent = keyword;
+                    const srcEl = card.querySelector('.rcc-source');
+                    if (srcEl) srcEl.textContent = data.source || '';
+                }
+            } else {
+                showToast('Rebuild failed: ' + (data.error || 'unknown'), 'err');
+            }
+        } catch (e) {
+            showToast('Network error during rebuild', 'err');
+        } finally {
+            if (researchBtn) researchBtn.disabled = false;
+            if (statusLabel) { statusLabel.style.display = 'none'; statusLabel.textContent = ''; }
+        }
+    }
+
+    async function handleModalUpload() {
+        if (_previewSegIndex === -1) return;
+        const file = uploadInput.files && uploadInput.files[0];
+        if (!file) return;
+
+        pauseAll();
+        if (statusLabel) { statusLabel.textContent = '📤 Uploading clip...'; statusLabel.style.display = 'inline'; }
+
+        try {
+            const fd = new FormData();
+            fd.append('file', file);
+            const res = await fetch(`/api/video/segments/${_previewSegIndex}/upload`, {
+                method: 'POST',
+                body: fd
+            });
+            const data = await res.json();
+            if (data.ok) {
+                showToast(`Segment ${_previewSegIndex + 1} replaced with uploaded file ✓`, 'ok');
+                
+                // Reload preview video player
+                player.src = `/api/video/segments/${_previewSegIndex}?t=${Date.now()}`;
+                player.load();
+
+                // Sync the corresponding card in the review grid if loaded
+                const card = document.getElementById(`rcc-${_previewSegIndex}`);
+                if (card) {
+                    card.classList.remove('replacing');
+                    card.classList.add('replaced');
+                    const thumbVid = card.querySelector('.rcc-thumb video');
+                    if (thumbVid) {
+                        thumbVid.src = `/api/video/segments/${_previewSegIndex}?t=${Date.now()}`;
+                        thumbVid.load();
+                    }
+                    const kwEl = card.querySelector('.rcc-keyword');
+                    if (kwEl) kwEl.textContent = 'custom upload';
+                    const srcEl = card.querySelector('.rcc-source');
+                    if (srcEl) srcEl.textContent = 'upload';
+                }
+            } else {
+                showToast('Upload failed: ' + (data.error || 'unknown'), 'err');
+            }
+        } catch (e) {
+            showToast('Network error during upload', 'err');
+        } finally {
+            if (statusLabel) { statusLabel.style.display = 'none'; statusLabel.textContent = ''; }
+            uploadInput.value = '';
+        }
+    }
+
+    if (researchBtn) researchBtn.addEventListener('click', handleModalResearch);
+    if (uploadInput) uploadInput.addEventListener('change', handleModalUpload);
 }
 
 // ── Review Panel ──────────────────────────────────────────────
