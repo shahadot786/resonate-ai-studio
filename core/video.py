@@ -108,9 +108,26 @@ def _orientation_from_resolution(resolution: str) -> str:
 
 def _search_pexels_video(keyword: str, api_key: str, orientation: str = "landscape") -> Optional[str]:
     """Search Pexels for a video clip. Returns direct download URL or None."""
+    # Determine the dimension predicate for the desired orientation.
+    # This is applied both when the API filter is active and when we fall
+    # back to an unfiltered search so a mislabelled clip never slips through.
+    if orientation == "portrait":
+        def _correct_dims(f: dict) -> bool:
+            return f.get("height", 0) > f.get("width", 0)
+    elif orientation == "landscape":
+        def _correct_dims(f: dict) -> bool:
+            return f.get("width", 0) >= f.get("height", 0)
+    else:  # square or unknown — accept anything
+        def _correct_dims(f: dict) -> bool:
+            return True
+
     try:
-        # First try requested orientation, then fall back to any orientation
-        for orient in ([orientation, None] if orientation != "landscape" else [orientation]):
+        # Always try with the orientation filter first, then without as a
+        # fallback (symmetric for both portrait and landscape).  In the
+        # fallback pass we still validate actual dimensions so a wrongly-
+        # labelled clip cannot sneak through.
+        passes = [orientation, None]
+        for orient in passes:
             params = {"query": keyword, "per_page": 8}
             if orient:
                 params["orientation"] = orient
@@ -125,22 +142,24 @@ def _search_pexels_video(keyword: str, api_key: str, orientation: str = "landsca
             videos = resp.json().get("videos", [])
             for video in videos:
                 files = video.get("video_files", [])
-                # For portrait: prefer tall files (height > width)
-                if orient == "portrait":
-                    portrait_files = [f for f in files if f.get("height", 0) > f.get("width", 0)]
-                    if portrait_files:
-                        # Pick highest quality portrait file
-                        portrait_files.sort(key=lambda f: f.get("height", 0), reverse=True)
-                        return portrait_files[0]["link"]
-                # Landscape: prefer wide HD files
-                for quality in ["hd", "sd"]:
-                    for vf in files:
-                        if vf.get("quality") == quality and vf.get("width", 0) >= 1280:
-                            return vf["link"]
-                if files:
-                    return files[0]["link"]
-            if videos:  # found videos on first attempt, don't retry
-                break
+                # Filter to files whose actual pixel dimensions match
+                matching = [f for f in files if _correct_dims(f)]
+                if not matching:
+                    continue
+                if orientation == "portrait":
+                    # Highest resolution portrait file wins
+                    matching.sort(key=lambda f: f.get("height", 0), reverse=True)
+                    return matching[0]["link"]
+                else:
+                    # Landscape / square: prefer HD width >= 1280
+                    for quality in ["hd", "sd"]:
+                        for vf in matching:
+                            if vf.get("quality") == quality and vf.get("width", 0) >= 1280:
+                                return vf["link"]
+                    # Any correctly-oriented file is better than nothing
+                    return matching[0]["link"]
+            if videos:  # found results but none matched dims — try unfiltered pass
+                continue
     except Exception as e:
         print(f"  ⚠ Pexels video search error: {e}")
     return None
@@ -154,8 +173,23 @@ def _search_pixabay_video(keyword: str, api_key: str, orientation: str = "horizo
         "horizontal" if orientation == "landscape" else
         "all"
     )
+    # Dimension predicate applied to every candidate file so mislabelled
+    # clips returned by the API are rejected before we ever use them.
+    if orientation == "portrait":
+        def _correct_dims(w: int, h: int) -> bool:
+            return h > w
+    elif orientation == "landscape":
+        def _correct_dims(w: int, h: int) -> bool:
+            return w >= h
+    else:
+        def _correct_dims(w: int, h: int) -> bool:
+            return True
+
     try:
-        for orient in ([pixabay_orient, "all"] if pixabay_orient != "all" else ["all"]):
+        # Try with the orientation filter first, then fall back to "all".
+        # In both passes we validate actual pixel dimensions.
+        passes = ([pixabay_orient, "all"] if pixabay_orient != "all" else ["all"])
+        for orient in passes:
             resp = requests.get(
                 "https://pixabay.com/api/videos/",
                 params={
@@ -175,10 +209,16 @@ def _search_pixabay_video(keyword: str, api_key: str, orientation: str = "horizo
                 for quality in ["large", "medium", "small"]:
                     v = videos.get(quality, {})
                     url = v.get("url")
-                    if url:
+                    if not url:
+                        continue
+                    # Validate actual dimensions — Pixabay's orientation tag
+                    # is occasionally wrong so we never rely on it alone.
+                    w = v.get("width", 0)
+                    h = v.get("height", 0)
+                    if _correct_dims(w, h):
                         return url
-            if hits:
-                break
+            if hits:  # results exist but none passed dim check — try fallback pass
+                continue
     except Exception as e:
         print(f"  ⚠ Pixabay video search error: {e}")
     return None
