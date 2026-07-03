@@ -1086,7 +1086,7 @@ function handleVideoProgress(data) {
         segments_done.forEach(seg => renderChip(seg));
     }
 
-    // Review Ready — open the Review Drawer (70% wide), show trigger button
+    // Review Ready — open the Review Drawer (70% wide), show trigger buttons
     if (status === 'review_ready') {
         document.getElementById('video-progress-bar').style.width = '100%';
         buildReviewPanel(segments_done || []);
@@ -1094,6 +1094,8 @@ function handleVideoProgress(data) {
         // Show the review trigger button so the user can re-open it
         const triggerRow = document.getElementById('review-trigger-row');
         if (triggerRow) triggerRow.classList.remove('hidden');
+        const toolbarBtn = document.getElementById('btn-open-review-drawer-toolbar');
+        if (toolbarBtn) toolbarBtn.classList.remove('hidden');
 
         // Automatically open the drawer on initial transition
         const drawer = document.getElementById('review-drawer');
@@ -1108,6 +1110,8 @@ function handleVideoProgress(data) {
     } else {
         const triggerRow = document.getElementById('review-trigger-row');
         if (triggerRow) triggerRow.classList.add('hidden');
+        const toolbarBtn = document.getElementById('btn-open-review-drawer-toolbar');
+        if (toolbarBtn) toolbarBtn.classList.add('hidden');
         
         const drawer = document.getElementById('review-drawer');
         const backdrop = document.getElementById('review-backdrop');
@@ -1122,6 +1126,8 @@ function handleVideoProgress(data) {
         const backdrop = document.getElementById('review-backdrop');
         if (drawer) drawer.classList.add('hidden');
         if (backdrop) backdrop.classList.add('hidden');
+        const toolbarBtn = document.getElementById('btn-open-review-drawer-toolbar');
+        if (toolbarBtn) toolbarBtn.classList.add('hidden');
         revealVideoPlayer();
     }
 }
