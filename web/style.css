@@ -57,7 +57,7 @@ body {
 /* ── APP LAYOUT GRID ── */
 #app-layout {
   display: grid;
-  grid-template-columns: 320px 1fr 400px;
+  grid-template-columns: 20% 50% 30%;
   height: 100vh;
   width: 100vw;
   overflow: hidden;
@@ -731,7 +731,8 @@ input[type="range"]::-webkit-slider-thumb:hover {
   flex-direction: column;
   height: 100vh;
   min-height: 0;
-  width: 500px;
+  width: 100%;
+  min-width: 0;
   overflow: hidden;
 }
 
