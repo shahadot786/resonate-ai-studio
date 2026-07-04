@@ -82,6 +82,51 @@ def _gemini_keyword(text: str, api_key: str) -> str:
         return _rake_keyword(text)
 
 
+def _gemini_keyword_alternatives(text: str, api_key: str) -> list[str]:
+    """
+    Generate 4-5 semantically diverse stock-search queries for a script line.
+    The first is the best match; the rest are fallbacks with different visual angles.
+    Returns a list of 2-3 word lowercase search queries.
+    Falls back to [_rake_keyword(text)] on error.
+    """
+    try:
+        from google import genai
+        client = genai.Client(api_key=api_key)
+        prompt = (
+            "You are an expert YouTube B-roll director choosing stock video footage.\n"
+            f"Script line: \"{text}\"\n\n"
+            "Generate exactly 5 different stock video search queries for this line, ordered from MOST to LEAST relevant.\n"
+            "Each query should represent a DIFFERENT visual angle of the same scene/emotion.\n\n"
+            "CRITICAL RULES:\n"
+            "1. Convert metaphors to concrete visuals: 'bank account ripped open with a shovel' → 'empty wallet', 'low bank balance screen'\n"
+            "2. Convert time/transition phrases: 'four days later' → 'calendar flipping', 'office morning'\n"
+            "3. Convert character names to visual actions: 'Derek wasn't there' → 'empty office chair', 'abandoned desk'\n"
+            "4. Each query must be DIFFERENT — explore different visual angles: mood, setting, object, action\n"
+            "5. Keep each query 2-3 words, lowercase, no punctuation\n\n"
+            "Example for 'my bank account looked like someone ripped it open with a shovel':\n"
+            "[\"empty wallet\", \"low bank balance\", \"stressed man laptop\", \"financial crisis\", \"broke person coins\"]\n\n"
+            "Return ONLY a valid JSON array of exactly 5 strings. No explanation or markdown."
+        )
+        models = ["gemini-2.5-flash", "gemini-2.0-flash-001", "gemini-2.0-flash"]
+        for model in models:
+            try:
+                response = client.models.generate_content(model=model, contents=prompt)
+                content = response.text.strip()
+                if content.startswith("```"):
+                    lines = content.splitlines()
+                    content = "\n".join(lines[1:-1]).strip()
+                alternatives = json.loads(content)
+                if isinstance(alternatives, list) and len(alternatives) >= 2:
+                    cleaned = [re.sub(r"[.!?,;]+$", "", str(k).strip().lower()).strip() for k in alternatives]
+                    return [k for k in cleaned if k][:5]
+            except Exception:
+                continue
+    except Exception as e:
+        print(f"  ⚠ Gemini alternatives failed ({e}), using RAKE")
+    # Fallback: single keyword from RAKE
+    return [_rake_keyword(text)]
+
+
 def extract_keyword(text: str, mode: str = "rake", api_key: str = "") -> str:
     """Extract a visual search keyword from a narration chunk."""
     if mode == "gemini" and api_key:
@@ -89,72 +134,105 @@ def extract_keyword(text: str, mode: str = "rake", api_key: str = "") -> str:
     return _rake_keyword(text)
 
 
+def extract_keyword_alternatives(text: str, mode: str = "rake", api_key: str = "") -> list[str]:
+    """
+    Return a list of diverse search query alternatives for a script line.
+    Gemini mode returns 5 semantically different queries; RAKE returns 1.
+    """
+    if mode == "gemini" and api_key:
+        return _gemini_keyword_alternatives(text, api_key)
+    kw = _rake_keyword(text)
+    # Generate simple word-subset fallbacks for RAKE mode
+    words = kw.split()
+    alts = [kw]
+    if len(words) >= 2:
+        alts.append(" ".join(words[:2]))
+    alts.append(words[0])
+    return list(dict.fromkeys(alts))  # deduplicated
+
+
 def extract_subclip_keywords(text: str, n_subs: int, mode: str = "rake", api_key: str = "") -> list[str]:
     """
-    Extract exactly n_subs keywords sequentially representing the timeline of the text.
-    For example, if text is "First we do A, then B occurs, finally C happens" and n_subs=3,
-    returns ["A", "B", "C"] matching the sequence of visual beats.
+    Extract exactly n_subs primary keywords sequentially representing the timeline of the text.
+    Returns a flat list of n_subs primary keyword strings (for display/logging).
+    Use extract_subclip_keyword_alternatives for the full alternatives-per-subclip grid.
+    """
+    alts_grid = extract_subclip_keyword_alternatives(text, n_subs, mode, api_key)
+    return [alts[0] for alts in alts_grid]
+
+
+def extract_subclip_keyword_alternatives(
+    text: str, n_subs: int, mode: str = "rake", api_key: str = ""
+) -> list[list[str]]:
+    """
+    For each of n_subs sub-clips, return a list of 3-5 diverse stock-search alternatives.
+    Returns a list[list[str]] of shape [n_subs][n_alternatives].
+    The first entry in each inner list is the best/primary match.
     """
     if n_subs <= 1:
-        return [extract_keyword(text, mode, api_key)]
+        return [extract_keyword_alternatives(text, mode, api_key)]
 
-    # 1. Try Gemini if enabled
+    # 1. Try Gemini if enabled — ask for a 2D grid: n_subs rows × 5 alternatives each
     if mode == "gemini" and api_key:
         try:
             from google import genai
             client = genai.Client(api_key=api_key)
             prompt = (
                 "You are an expert YouTube video editor and B-roll director.\n"
-                "I have a script segment:\n"
+                "Script segment:\n"
                 f"\"{text}\"\n\n"
-                f"This segment will be split into exactly {n_subs} sequential video clips. "
-                f"You need to provide exactly {n_subs} visual search queries (one for each clip, in chronological order) "
-                "suitable for fetching stock footage from Pexels or Pixabay.\n\n"
-                "CRITICAL INSTRUCTIONS FOR STOCK SEARCH CONVERSION:\n"
-                "1. DO NOT be literal with metaphors. If the script says 'bank account ripped open with a shovel' or 'cash vanished into thin air', "
-                "do NOT search for shovels or vanishing cash. Instead, search for visual representations of the underlying meaning: "
-                "'empty wallet', 'stressed businessman screen', 'bank balance phone', 'man head in hands'.\n"
-                "2. DO NOT search for abstract time phrases or transition words (e.g. 'four days later', 'suddenly', 'meanwhile', 'next morning'). "
-                "Instead, look at the action/setting and search for: 'calling phone office', 'clocks ticking', 'sunrise city skyline'.\n"
-                "3. DO NOT use character names (e.g. 'Derek', 'Marcus') or dialogue tags. Search for the visual counterpart: "
-                "'man sitting desk', 'two men talking', 'empty office desk'.\n"
-                "4. Keep each query simple, visual, and highly searchable (2-3 words, lowercase, no punctuation).\n\n"
-                f"Return ONLY a valid JSON list of exactly {n_subs} strings, for example: "
-                "[\"query1\", \"query2\", \"query3\"]. Do not include any explanation or markdown formatting."
+                f"This segment will be split into exactly {n_subs} sequential video clips.\n"
+                f"For EACH clip, provide exactly 5 different stock video search queries, "
+                "ordered from MOST to LEAST relevant for that clip's moment in the script.\n\n"
+                "CRITICAL RULES:\n"
+                "1. Convert metaphors to concrete visuals: 'bank account ripped open' → 'empty wallet'\n"
+                "2. Convert time phrases: 'four days later' → 'calendar flipping', 'office morning'\n"
+                "3. Convert character names to visual actions: 'Derek wasn't there' → 'empty office desk'\n"
+                "4. Each of the 5 alternatives must be a DIFFERENT visual angle (mood/setting/object/action)\n"
+                "5. Keep each query 2-3 words, lowercase, no punctuation\n\n"
+                f"Return ONLY a valid JSON array of exactly {n_subs} arrays, each containing exactly 5 strings.\n"
+                f"Example for n=2: [[\"phone call office\", \"man on phone\", \"business call\", \"smartphone desk\", \"office worker calling\"], "
+                "[\"empty wallet\", \"low bank balance\", \"stressed businessman\", \"financial crisis\", \"broke person\"]]"
             )
             models = ["gemini-2.5-flash", "gemini-2.0-flash-001", "gemini-2.0-flash"]
             for model in models:
                 try:
-                    response = client.models.generate_content(
-                        model=model,
-                        contents=prompt,
-                    )
+                    response = client.models.generate_content(model=model, contents=prompt)
                     content = response.text.strip()
                     if content.startswith("```"):
                         lines = content.splitlines()
-                        if lines[0].startswith("```json") or lines[0].startswith("```"):
-                            content = "\n".join(lines[1:-1]).strip()
-                    kws = json.loads(content)
-                    if isinstance(kws, list) and len(kws) == n_subs:
-                        return [str(k).strip() for k in kws]
+                        content = "\n".join(lines[1:-1]).strip()
+                    grid = json.loads(content)
+                    if isinstance(grid, list) and len(grid) == n_subs:
+                        result = []
+                        valid = True
+                        for row in grid:
+                            if not isinstance(row, list) or len(row) < 2:
+                                valid = False
+                                break
+                            cleaned = [re.sub(r"[.!?,;]+$", "", str(k).strip().lower()).strip() for k in row]
+                            cleaned = [k for k in cleaned if k][:5]
+                            result.append(cleaned)
+                        if valid:
+                            return result
                 except Exception:
                     continue
         except Exception as e:
-            print(f"  ⚠ Gemini subclip keyword extraction failed: {e}")
+            print(f"  ⚠ Gemini subclip alternatives failed: {e}")
 
-    # 2. Offline fallback (RAKE / simple splitting)
+    # 2. Offline fallback — split text into clauses, run RAKE on each
     clauses = [c.strip() for c in re.split(r'[.,;!?]', text) if c.strip()]
     if not clauses:
         clauses = [text]
 
-    kws = []
+    result = []
     if len(clauses) >= n_subs:
         chunk_size = len(clauses) / n_subs
         for i in range(n_subs):
             start = int(i * chunk_size)
             end = int((i + 1) * chunk_size) if i < n_subs - 1 else len(clauses)
             sub_text = " ".join(clauses[start:end])
-            kws.append(extract_keyword(sub_text, mode="rake"))
+            result.append(extract_keyword_alternatives(sub_text, mode="rake"))
     else:
         words = text.split()
         if words:
@@ -163,14 +241,14 @@ def extract_subclip_keywords(text: str, n_subs: int, mode: str = "rake", api_key
                 start = int(i * word_chunk)
                 end = int((i + 1) * word_chunk) if i < n_subs - 1 else len(words)
                 sub_text = " ".join(words[start:end])
-                kws.append(extract_keyword(sub_text, mode="rake"))
+                result.append(extract_keyword_alternatives(sub_text, mode="rake"))
         else:
-            kws.append(text)
+            result.append(["broll video"])
 
-    # Ensure we return exactly n_subs keywords
-    while len(kws) < n_subs:
-        kws.append(kws[-1] if kws else "broll video")
-    return kws[:n_subs]
+    # Pad to exactly n_subs rows
+    while len(result) < n_subs:
+        result.append(result[-1] if result else ["broll video"])
+    return result[:n_subs]
 
 
 # ── Media search — Videos ────────────────────────────────────
@@ -809,26 +887,22 @@ def build_segment(
         providers.append(("Wikimedia", _search_wikimedia_image))
         return providers
 
-    # ── Helper: search + download one clip for a given keyword ──
-    def _fetch_one_clip(kw: str, raw_path: str) -> tuple[str | None, str | None]:
-        """Try all video providers for kw. Returns (path, source_name) or (None, None)."""
-        kw_words = kw.split()
-        terms = [kw]
-        if len(kw_words) >= 2:
-            terms.append(" ".join(kw_words[:2]))
-        terms.append(kw_words[0])
-        seen_t: set = set()
-        terms = [t for t in terms if not (t in seen_t or seen_t.add(t))]
-
-        for term in terms:
+    # ── Helper: search + download one clip given a list of keyword alternatives ──
+    def _fetch_one_clip(kw_alternatives: list[str], raw_path: str) -> tuple[str | None, str | None, str | None]:
+        """
+        Try all alternative keywords across all video providers.
+        kw_alternatives is a list ordered from best to least relevant.
+        Returns (path, source_name, matched_keyword) or (None, None, None).
+        """
+        for kw in kw_alternatives:
             for name, searcher in _make_video_providers():
-                url = searcher(term)
+                url = searcher(kw)
                 if not url:
                     continue
                 if download_media(url, raw_path):
                     if _get_duration_secs(raw_path) > 0:
-                        return raw_path, name
-        return None, None
+                        return raw_path, name, kw
+        return None, None, None
 
     # ── 3. Decide strategy: sub-clip splitting vs. single fill ──
 
@@ -840,53 +914,63 @@ def build_segment(
         sub_dur = duration / n_subs   # distribute evenly to avoid tiny last clip
         _emit(f"⏱ Clip interval {clip_interval:.0f}s → {n_subs} sub-clips of {sub_dur:.1f}s each")
 
-        # Extract sequential keywords matching the different parts of the script
-        sub_kws = extract_subclip_keywords(text, n_subs, mode=keyword_mode, api_key=gemini_key)
-        _emit(f"🔑 Sub-clip keywords: {', '.join([f'«{k}»' for k in sub_kws])}")
+        # Extract N×5 alternatives grid from Gemini
+        sub_alts_grid = extract_subclip_keyword_alternatives(text, n_subs, mode=keyword_mode, api_key=gemini_key)
+        primary_kws = [alts[0] for alts in sub_alts_grid]
+        _emit(f"🔑 Sub-clip primary keywords: {', '.join([f'«{k}»' for k in primary_kws])}")
 
         sub_parts = []     # paths of finished sub-clip segment files
         all_sources: list[str] = []
+        matched_kws: list[str] = []
         tmp_sub_dir = out_path + "_subs"
         os.makedirs(tmp_sub_dir, exist_ok=True)
 
         try:
             for si in range(n_subs):
-                varied_kw = sub_kws[si]
+                alts = sub_alts_grid[si]
                 raw_path = os.path.join(raw_dir, f"raw_{index:04d}_sub{si}.mp4")
                 sub_out  = os.path.join(tmp_sub_dir, f"sub_{si:04d}.mp4")
 
-                _emit(f"🎬 Sub-clip {si+1}/{n_subs} — searching «{varied_kw}»…")
-                clip_path, src_name = _fetch_one_clip(varied_kw, raw_path)
+                _emit(f"🎬 Sub-clip {si+1}/{n_subs} — trying {len(alts)} alternatives: {alts[:3]}…")
+                clip_path, src_name, matched_kw = _fetch_one_clip(alts, raw_path)
 
                 if clip_path:
-                    _emit(f"⬇ Filling sub-clip {si+1} ({sub_dur:.1f}s) from {src_name}…")
+                    _emit(f"⬇ Filling sub-clip {si+1} ({sub_dur:.1f}s) from {src_name} via «{matched_kw}»…")
                     ok_sub = fill_video_segment([clip_path], sub_out, sub_dur, resolution, fps)
                     if ok_sub:
                         sub_parts.append(sub_out)
                         all_sources.append(src_name)
+                        matched_kws.append(matched_kw)
                         _emit(f"✓ Sub-clip {si+1} done ({src_name})")
                         continue
 
-                # Fallback: try image for this sub-clip
-                _emit(f"🖼 Sub-clip {si+1}: trying image fallback…")
+                # Fallback: try image for this sub-clip using all alternatives
+                _emit(f"🖼 Sub-clip {si+1}: trying image fallback with {len(alts)} alternatives…")
                 img_raw = os.path.join(raw_dir, f"raw_{index:04d}_sub{si}_img.jpg")
-                for name, searcher in _make_image_providers():
-                    url = searcher(varied_kw)
-                    if url and download_media(url, img_raw):
-                        ok_img = image_to_video(img_raw, sub_out, sub_dur, resolution, fps)
-                        if ok_img:
-                            sub_parts.append(sub_out)
-                            all_sources.append(f"{name}(img)")
-                            break
-                else:
+                image_found = False
+                for alt_kw in alts:
+                    for name, searcher in _make_image_providers():
+                        url = searcher(alt_kw)
+                        if url and download_media(url, img_raw):
+                            ok_img = image_to_video(img_raw, sub_out, sub_dur, resolution, fps)
+                            if ok_img:
+                                sub_parts.append(sub_out)
+                                all_sources.append(f"{name}(img)")
+                                matched_kws.append(alt_kw)
+                                image_found = True
+                                break
+                    if image_found:
+                        break
+
+                if not image_found:
                     # Last resort: solid color for this sub-clip
                     create_color_segment(sub_out, sub_dur, resolution, fps)
                     sub_parts.append(sub_out)
                     all_sources.append("fallback")
+                    matched_kws.append(alts[0])
 
             if sub_parts:
                 _emit(f"✂ Concatenating {len(sub_parts)} sub-clips…")
-                # Concat all sub-parts into the final segment
                 concat_txt = os.path.join(tmp_sub_dir, "concat.txt")
                 with open(concat_txt, "w") as f:
                     for p in sub_parts:
@@ -905,7 +989,7 @@ def build_segment(
                     r = None
                 if r and r.returncode == 0:
                     sources_label = "+".join(dict.fromkeys(all_sources))
-                    result.update(source=sources_label, type="video", ok=True, keyword=", ".join(sub_kws))
+                    result.update(source=sources_label, type="video", ok=True, keyword=", ".join(matched_kws))
                     return result
 
         finally:
@@ -915,43 +999,31 @@ def build_segment(
 
         _emit("⚠ Sub-clip strategy failed, falling back to single-clip fill…")
 
-    # ── 4. Single-clip fill strategy (original behaviour) ────
+    # ── 4. Single-clip fill strategy — uses full alternatives list ──
     MAX_CLIPS = 5
 
-    providers_video = _make_video_providers()
-
-    kw_words = keyword.split()
-    search_terms = [keyword]
-    if len(kw_words) >= 2:
-        search_terms.append(" ".join(kw_words[:2]))
-    search_terms.append(kw_words[0])
-    seen_s: set = set()
-    search_terms = [t for t in search_terms if not (t in seen_s or seen_s.add(t))]
+    # Get diverse alternatives for the main keyword instead of word-chopped variants
+    kw_alternatives = extract_keyword_alternatives(text, mode=keyword_mode, api_key=gemini_key)
+    _emit(f"🔑 Keyword alternatives: {kw_alternatives}")
 
     raw_clips: list[str] = []
     covered   = 0.0
     source_names: list[str] = []
+    matched_kw_list: list[str] = []
 
-    for term in search_terms:
+    for alt_kw in kw_alternatives:
         if covered >= duration or len(raw_clips) >= MAX_CLIPS:
             break
-        for name, searcher in providers_video:
-            if covered >= duration or len(raw_clips) >= MAX_CLIPS:
-                break
-            _emit(f"🎬 Searching {name} — '{term}'…")
-            url = searcher(term)
-            if not url:
-                continue
-            clip_idx = len(raw_clips)
-            raw_path = os.path.join(raw_dir, f"raw_{index:04d}_v{clip_idx}.mp4")
-            _emit(f"⬇ Downloading clip {clip_idx+1} from {name}…")
-            if download_media(url, raw_path):
-                clip_dur = _get_duration_secs(raw_path)
-                if clip_dur > 0:
-                    raw_clips.append(raw_path)
-                    covered += clip_dur
-                    source_names.append(name)
-                    _emit(f"✓ Clip {clip_idx+1}: {clip_dur:.1f}s from {name} (total {covered:.1f}s / need {duration:.1f}s)")
+        raw_path = os.path.join(raw_dir, f"raw_{index:04d}_v{len(raw_clips)}.mp4")
+        clip_path, src_name, matched_kw = _fetch_one_clip([alt_kw], raw_path)
+        if clip_path:
+            clip_dur = _get_duration_secs(clip_path)
+            if clip_dur > 0:
+                raw_clips.append(clip_path)
+                covered += clip_dur
+                source_names.append(src_name)
+                matched_kw_list.append(matched_kw)
+                _emit(f"✓ Clip {len(raw_clips)}: {clip_dur:.1f}s from {src_name} via «{matched_kw}» (total {covered:.1f}s / need {duration:.1f}s)")
 
     # ── 5. Stitch clips → exact-duration segment ──────────────
     if raw_clips:
@@ -960,26 +1032,31 @@ def build_segment(
         _emit(f"✂ Filling {duration:.1f}s from {n} clip{'s' if n>1 else ''} ({clips_label})…")
         ok = fill_video_segment(raw_clips, out_path, duration, resolution, fps)
         if ok:
-            result.update(source=clips_label, type="video", ok=True)
+            best_kw = matched_kw_list[0] if matched_kw_list else keyword
+            result.update(source=clips_label, type="video", ok=True, keyword=best_kw)
             return result
         _emit("⚠ Video fill failed, trying image fallback…")
 
-    # ── 6. Fallback: search for image ─────────────────────────
+    # ── 6. Fallback: search for image using all alternatives ──
     image_url = None
     source_name = "fallback"
-    for name, searcher in _make_image_providers():
-        _emit(f"🖼 Searching {name} image…")
-        url = searcher(keyword)
-        if url:
-            _emit(f"⬇ Downloading image from {name}…")
-            ext = ".jpg"
-            if url.lower().endswith(".png"):
-                ext = ".png"
-            raw_path = raw_image + ext
-            if download_media(url, raw_path):
-                image_url = raw_path
-                source_name = f"{name} (image)"
-                break
+    for alt_kw in kw_alternatives:
+        for name, searcher in _make_image_providers():
+            _emit(f"🖼 Searching {name} image — «{alt_kw}»…")
+            url = searcher(alt_kw)
+            if url:
+                _emit(f"⬇ Downloading image from {name}…")
+                ext = ".jpg"
+                if url.lower().endswith(".png"):
+                    ext = ".png"
+                raw_path = raw_image + ext
+                if download_media(url, raw_path):
+                    image_url = raw_path
+                    source_name = f"{name} (image)"
+                    keyword = alt_kw  # update keyword to what actually matched
+                    break
+        if image_url:
+            break
 
     # ── 7. Process image → video ──────────────────────────────
     if image_url:
