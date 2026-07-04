@@ -972,7 +972,7 @@ async def _run_video_worker():
         _video_worker_process = await asyncio.create_subprocess_exec(
             python, "core/video_worker.py", config_path,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            stderr=None,  # inherit parent stream to prevent pipe deadlock
             cwd=os.getcwd(),
         )
 
@@ -1058,8 +1058,10 @@ async def _run_video_worker():
         await _video_worker_process.wait()
 
         if _video_worker_process.returncode != 0 and _video_state["status"] not in ("done", "error", "cancelled"):
-            stderr = await _video_worker_process.stderr.read()
-            err_msg = stderr.decode("utf-8", errors="replace").strip()[-300:]
+            err_msg = ""
+            if _video_worker_process.stderr:
+                stderr = await _video_worker_process.stderr.read()
+                err_msg = stderr.decode("utf-8", errors="replace").strip()[-300:]
             _update_video_state(
                 running=False,
                 status="error",
