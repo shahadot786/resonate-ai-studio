@@ -24,105 +24,29 @@ import requests
 
 # ── Keyword extraction ────────────────────────────────────────
 
+def _simple_visual_fallback(text: str) -> list[str]:
+    """A clean, minimal fallback that filters out stop words if the Groq API fails."""
+    clean = re.sub(r'[."\'`!?,;:]', "", text).strip().lower()
+    stop_words = {
+        "i", "me", "my", "we", "our", "you", "your", "he", "him", "his", "she", "her",
+        "they", "them", "their", "it", "its", "the", "a", "an", "and", "or", "but",
+        "in", "on", "at", "to", "for", "with", "by", "from", "of", "about", "was", "were",
+        "is", "am", "are", "had", "have", "has", "do", "does", "did", "been", "would", "should", "could",
+        "four", "days", "later", "suddenly", "then", "after", "before", "once", "again"
+    }
+    words = [w for w in clean.split() if w not in stop_words]
+    if not words:
+        return ["office workspace"]
 
-def _rake_keyword(text: str) -> str:
-    """Extract best keyword phrase using RAKE (offline, no API)."""
-    try:
-        from rake_nltk import Rake
-        r = Rake(max_length=3)
-        r.extract_keywords_from_text(text)
-        phrases = r.get_ranked_phrases()
-        return phrases[0] if phrases else text[:40]
-    except Exception:
-        # Fallback: first 5 words
-        words = text.split()
-        return " ".join(words[:5])
-
-
-def _gemini_keyword(text: str, api_key: str) -> str:
-    """Extract best visual b-roll keyword using Gemini Flash (free tier)."""
-    try:
-        from google import genai
-        client = genai.Client(api_key=api_key)
-        prompt = (
-            "You are an expert YouTube B-roll director choosing stock footage for a narration script line.\n"
-            f"Narration line: \"{text}\"\n\n"
-            "CRITICAL INSTRUCTIONS FOR STOCK SEARCH CONVERSION:\n"
-            "1. DO NOT be literal with metaphors. If the script says 'bank account ripped open with a shovel' or 'cash vanished', "
-            "search for the underlying visual meaning: 'empty wallet', 'stressed businessman laptop', 'low bank balance'.\n"
-            "2. DO NOT search for abstract time/transition phrases (e.g. 'four days later', 'suddenly'). "
-            "Instead, search for concrete visuals: 'phone call office', 'clocks ticking', 'empty desk'.\n"
-            "3. DO NOT search for character names or dialogue tags. Search for visual equivalents: 'man talking phone', 'stressed face'.\n"
-            "4. Keep the search query simple and highly searchable (2-3 words, lowercase, no punctuation).\n\n"
-            "Return ONLY a short 2-3 word search query phrase, with no explanation, markdown formatting, or punctuation."
-        )
-        # Try free-tier models in order (confirmed working first)
-        models = [
-            "gemini-2.5-flash",
-            "gemini-2.0-flash-001",
-            "gemini-2.0-flash-lite-001",
-            "gemini-2.0-flash",
-        ]
-        last_err = None
-        for model in models:
-            try:
-                response = client.models.generate_content(
-                    model=model,
-                    contents=prompt,
-                )
-                keyword = response.text.strip().strip('"').strip("'").strip()
-                keyword = re.sub(r"[.!?,;]+$", "", keyword).strip()
-                return keyword if keyword else _rake_keyword(text)
-            except Exception as e:
-                last_err = e
-                continue
-        raise last_err
-    except Exception as e:
-        print(f"  ⚠ Gemini keyword failed ({e}), falling back")
-        return ""
-
-
-def _gemini_keyword_alternatives(text: str, api_key: str) -> list[str]:
-    """
-    Generate 4-5 semantically diverse stock-search queries for a script line.
-    The first is the best match; the rest are fallbacks with different visual angles.
-    Returns a list of 2-3 word lowercase search queries.
-    """
-    try:
-        from google import genai
-        client = genai.Client(api_key=api_key)
-        prompt = (
-            "You are an expert YouTube B-roll director choosing stock video footage.\n"
-            f"Script line: \"{text}\"\n\n"
-            "Generate exactly 5 different stock video search queries for this line, ordered from MOST to LEAST relevant.\n"
-            "Each query should represent a DIFFERENT visual angle of the same scene/emotion.\n\n"
-            "CRITICAL RULES:\n"
-            "1. Convert metaphors to concrete visuals: 'bank account ripped open with a shovel' → 'empty wallet', 'low bank balance screen'\n"
-            "2. Convert time/transition phrases: 'four days later' → 'calendar flipping', 'office morning'\n"
-            "3. Convert character names to visual actions: 'Derek wasn't there' → 'empty office chair', 'abandoned desk'\n"
-            "4. Each query must be DIFFERENT — explore different visual angles: mood, setting, object, action\n"
-            "5. Keep each query 2-3 words, lowercase, no punctuation\n\n"
-            "Example for 'my bank account looked like someone ripped it open with a shovel':\n"
-            "[\"empty wallet\", \"low bank balance\", \"stressed man laptop\", \"financial crisis\", \"broke person coins\"]\n\n"
-            "Return ONLY a valid JSON array of exactly 5 strings. No explanation or markdown."
-        )
-        models = ["gemini-2.5-flash", "gemini-2.0-flash-001", "gemini-2.0-flash"]
-        for model in models:
-            try:
-                response = client.models.generate_content(model=model, contents=prompt)
-                content = response.text.strip()
-                if content.startswith("```"):
-                    lines = content.splitlines()
-                    content = "\n".join(lines[1:-1]).strip()
-                alternatives = json.loads(content)
-                if isinstance(alternatives, list) and len(alternatives) >= 2:
-                    cleaned = [re.sub(r"[.!?,;]+$", "", str(k).strip().lower()).strip() for k in alternatives]
-                    return [k for k in cleaned if k][:5]
-            except Exception:
-                continue
-    except Exception as e:
-        print(f"  ⚠ Gemini alternatives failed ({e})")
-    return []
+    res = []
+    if len(words) >= 3:
+        res.append(" ".join(words[:3]))
+    if len(words) >= 2:
+        res.append(" ".join(words[:2]))
+    res.append(words[0])
+    res.append("office setting")
+    res.append("corporate worker")
+    return list(dict.fromkeys(res))[:5]
 
 
 def _groq_keyword_alternatives(text: str, groq_keys: list[str]) -> list[str]:
@@ -270,48 +194,27 @@ def _groq_subclip_keyword_alternatives(text: str, n_subs: int, groq_keys: list[s
 
 def extract_keyword(text: str, mode: str = "rake", api_key: str = "", groq_keys: list[str] = None) -> str:
     """Extract a visual search keyword from a narration chunk."""
-    if mode in ("gemini", "groq", "auto"):
-        alts = extract_keyword_alternatives(text, mode, api_key, groq_keys)
-        if alts:
-            return alts[0]
-    return _rake_keyword(text)
+    alts = extract_keyword_alternatives(text, mode, api_key, groq_keys)
+    return alts[0] if alts else "office"
 
 
 def extract_keyword_alternatives(text: str, mode: str = "rake", api_key: str = "", groq_keys: list[str] = None) -> list[str]:
     """
     Return a list of diverse search query alternatives for a script line.
-    Gemini/Groq mode returns 5 semantically different queries; RAKE returns 1.
+    Uses Groq API; falls back to a clean manual stop-word filtering if keys fail.
     """
-    if mode in ("gemini", "groq", "auto"):
-        # 1. Try Gemini first if key is present
-        if api_key:
-            res = _gemini_keyword_alternatives(text, api_key)
-            if len(res) >= 2:
-                return res
-            print("  ⚠ Gemini returned fallback/failed, attempting Groq...")
+    if groq_keys:
+        res = _groq_keyword_alternatives(text, groq_keys)
+        if res:
+            return res
 
-        # 2. Try Groq (with rotating keys)
-        if groq_keys:
-            res = _groq_keyword_alternatives(text, groq_keys)
-            if res:
-                return res
-
-    # 3. Final fallback to RAKE
-    kw = _rake_keyword(text)
-    words = kw.split()
-    alts = [kw]
-    if len(words) >= 2:
-        alts.append(" ".join(words[:2]))
-    alts.append(words[0])
-    return list(dict.fromkeys(alts))  # deduplicated
-
+    # Emergency fallback (non-API stop-word filtering)
+    return _simple_visual_fallback(text)
 
 
 def extract_subclip_keywords(text: str, n_subs: int, mode: str = "rake", api_key: str = "", groq_keys: list[str] = None) -> list[str]:
     """
     Extract exactly n_subs primary keywords sequentially representing the timeline of the text.
-    Returns a flat list of n_subs primary keyword strings (for display/logging).
-    Use extract_subclip_keyword_alternatives for the full alternatives-per-subclip grid.
     """
     alts_grid = extract_subclip_keyword_alternatives(text, n_subs, mode, api_key, groq_keys)
     return [alts[0] for alts in alts_grid]
@@ -321,68 +224,17 @@ def extract_subclip_keyword_alternatives(
     text: str, n_subs: int, mode: str = "rake", api_key: str = "", groq_keys: list[str] = None
 ) -> list[list[str]]:
     """
-    For each of n_subs sub-clips, return a list of 3-5 diverse stock-search alternatives.
-    Returns a list[list[str]] of shape [n_subs][n_alternatives].
-    The first entry in each inner list is the best/primary match.
+    For each of n_subs sub-clips, return a list of 5 diverse search query alternatives using Groq.
     """
     if n_subs <= 1:
         return [extract_keyword_alternatives(text, mode, api_key, groq_keys)]
 
-    # 1. Try Gemini if enabled — ask for a 2D grid: n_subs rows × 5 alternatives each
-    if mode in ("gemini", "groq", "auto") and api_key:
-        try:
-            from google import genai
-            client = genai.Client(api_key=api_key)
-            prompt = (
-                "You are an expert YouTube video editor and B-roll director.\n"
-                "Script segment:\n"
-                f"\"{text}\"\n\n"
-                f"This segment will be split into exactly {n_subs} sequential video clips.\n"
-                f"For EACH clip, provide exactly 5 different stock video search queries, "
-                "ordered from MOST to LEAST relevant for that clip's moment in the script.\n\n"
-                "CRITICAL RULES:\n"
-                "1. Convert metaphors to concrete visuals: 'bank account ripped open' → 'empty wallet'\n"
-                "2. Convert time phrases: 'four days later' → 'calendar flipping', 'office morning'\n"
-                "3. Convert character names to visual actions: 'Derek wasn't there' → 'empty office desk'\n"
-                "4. Each of the 5 alternatives must be a DIFFERENT visual angle (mood/setting/object/action)\n"
-                "5. Keep each query 2-3 words, lowercase, no punctuation\n\n"
-                f"Return ONLY a valid JSON array of exactly {n_subs} arrays, each containing exactly 5 strings.\n"
-                f"Example for n=2: [[\"phone call office\", \"man on phone\", \"business call\", \"smartphone desk\", \"office worker calling\"], "
-                "[\"empty wallet\", \"low bank balance\", \"stressed businessman\", \"financial crisis\", \"broke person\"]]"
-            )
-            models = ["gemini-2.5-flash", "gemini-2.0-flash-001", "gemini-2.0-flash"]
-            for model in models:
-                try:
-                    response = client.models.generate_content(model=model, contents=prompt)
-                    content = response.text.strip()
-                    if content.startswith("```"):
-                        lines = content.splitlines()
-                        content = "\n".join(lines[1:-1]).strip()
-                    grid = json.loads(content)
-                    if isinstance(grid, list) and len(grid) == n_subs:
-                        result = []
-                        valid = True
-                        for row in grid:
-                            if not isinstance(row, list) or len(row) < 2:
-                                valid = False
-                                break
-                            cleaned = [re.sub(r"[.!?,;]+$", "", str(k).strip().lower()).strip() for k in row]
-                            cleaned = [k for k in cleaned if k][:5]
-                            result.append(cleaned)
-                        if valid:
-                            return result
-                except Exception:
-                    continue
-        except Exception as e:
-            print(f"  ⚠ Gemini subclip alternatives failed: {e}")
-
-    # 2. Try Groq (with rotating keys) as fallback
-    if mode in ("gemini", "groq", "auto") and groq_keys:
+    if groq_keys:
         res = _groq_subclip_keyword_alternatives(text, n_subs, groq_keys)
         if res:
             return res
 
-    # 3. Offline fallback — split text into clauses, run RAKE on each
+    # Minimal fallback split by clauses
     clauses = [c.strip() for c in re.split(r'[.,;!?]', text) if c.strip()]
     if not clauses:
         clauses = [text]
@@ -394,7 +246,7 @@ def extract_subclip_keyword_alternatives(
             start = int(i * chunk_size)
             end = int((i + 1) * chunk_size) if i < n_subs - 1 else len(clauses)
             sub_text = " ".join(clauses[start:end])
-            result.append(extract_keyword_alternatives(sub_text, mode="rake"))
+            result.append(extract_keyword_alternatives(sub_text, mode, api_key, groq_keys))
     else:
         words = text.split()
         if words:
@@ -403,13 +255,12 @@ def extract_subclip_keyword_alternatives(
                 start = int(i * word_chunk)
                 end = int((i + 1) * word_chunk) if i < n_subs - 1 else len(words)
                 sub_text = " ".join(words[start:end])
-                result.append(extract_keyword_alternatives(sub_text, mode="rake"))
+                result.append(extract_keyword_alternatives(sub_text, mode, api_key, groq_keys))
         else:
-            result.append(["broll video"])
+            result.append(["office"])
 
-    # Pad to exactly n_subs rows
     while len(result) < n_subs:
-        result.append(result[-1] if result else ["broll video"])
+        result.append(result[-1] if result else ["office"])
     return result[:n_subs]
 
 
@@ -984,10 +835,8 @@ def build_segment(
     pexels_key: str = "",
     pixabay_key: str = "",
     coverr_key: str = "",
-    gemini_key: str = "",
-    youtube_key: str = "",
     groq_keys: list[str] = None,
-    keyword_mode: str = "rake",
+    keyword_mode: str = "groq",
     resolution: str = "1920x1080",
     fps: int = 30,
     segments_dir: str = "outputs/video/segments",
@@ -1018,7 +867,8 @@ def build_segment(
 
     # ── 2. Extract keyword ────────────────────────────────────
     _emit("🔍 Extracting keyword…")
-    keyword = extract_keyword(text, mode=keyword_mode, api_key=gemini_key, groq_keys=groq_keys)
+    keyword = extract_keyword(text, mode=keyword_mode, api_key="", groq_keys=groq_keys)
+
 
     _emit(f"🔑 Keyword: «{keyword}»")
 
@@ -1058,22 +908,11 @@ def build_segment(
     # ── Helper: search + download one clip given a list of keyword alternatives ──
     def _fetch_one_clip(kw_alternatives: list[str], raw_path: str) -> tuple[str | None, str | None, str | None]:
         """
-        Try all alternative keywords across all video providers.
-        Priority order: YouTube CC → Pexels → Pixabay → Coverr → Wikimedia.
+        Try all alternative keywords across all stock video providers (Pexels → Pixabay → Coverr → Wikimedia).
         kw_alternatives is a list ordered from best to least relevant.
         Returns (path, source_name, matched_keyword) or (None, None, None).
         """
-        # 1. Try YouTube CC first (best semantic matching, completely free)
-        if youtube_key:
-            from core.youtube_cc import search_and_download_youtube_cc
-            for kw in kw_alternatives:
-                _emit(f"  🎬 YouTubeCC — searching «{kw}»…")
-                result_path = search_and_download_youtube_cc(kw, raw_path, youtube_key, _orient)
-                if result_path and os.path.exists(result_path) and _get_duration_secs(result_path) > 0:
-                    _emit(f"  ✓ YouTubeCC found clip for «{kw}»")
-                    return result_path, "YouTubeCC", kw
-
-        # 2. Fall back to stock API providers (Pexels / Pixabay / Wikimedia)
+        # Try stock API providers (Pexels / Pixabay / Wikimedia)
         for kw in kw_alternatives:
             for name, searcher in _make_video_providers():
                 url = searcher(kw)
@@ -1095,9 +934,9 @@ def build_segment(
         sub_dur = duration / n_subs   # distribute evenly to avoid tiny last clip
         _emit(f"⏱ Clip interval {clip_interval:.0f}s → {n_subs} sub-clips of {sub_dur:.1f}s each")
 
-        # Extract N×5 alternatives grid from Gemini/Groq
+        # Extract N×5 alternatives grid from Groq
         sub_alts_grid = extract_subclip_keyword_alternatives(
-            text, n_subs, mode=keyword_mode, api_key=gemini_key, groq_keys=groq_keys
+            text, n_subs, mode=keyword_mode, api_key="", groq_keys=groq_keys
         )
         primary_kws = [alts[0] for alts in sub_alts_grid]
         _emit(f"🔑 Sub-clip primary keywords: {', '.join([f'«{k}»' for k in primary_kws])}")
@@ -1187,7 +1026,7 @@ def build_segment(
 
     # Get diverse alternatives for the main keyword instead of word-chopped variants
     kw_alternatives = extract_keyword_alternatives(
-        text, mode=keyword_mode, api_key=gemini_key, groq_keys=groq_keys
+        text, mode=keyword_mode, api_key="", groq_keys=groq_keys
     )
     _emit(f"🔑 Keyword alternatives: {kw_alternatives}")
 

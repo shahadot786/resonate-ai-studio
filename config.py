@@ -92,8 +92,6 @@ except ImportError:
 PEXELS_API_KEY   = _os.getenv("PEXELS_API_KEY",  "")
 PIXABAY_API_KEY  = _os.getenv("PIXABAY_API_KEY", "")
 COVERR_API_KEY   = _os.getenv("COVERR_API_KEY",  "")
-GEMINI_API_KEY   = _os.getenv("GEMINI_API_KEY",  "")
-YOUTUBE_API_KEY  = _os.getenv("YOUTUBE_API_KEY", "")
 GROQ_API_KEYS    = [k.strip() for k in _os.getenv("GROQ_API_KEYS", "").split(",") if k.strip()]
 
 
@@ -105,8 +103,9 @@ VIDEO_DIR           = "outputs/video"
 VIDEO_SEGMENTS_DIR  = "outputs/video/segments"
 VIDEO_OUTPUT_FILE   = "outputs/video/final_video.mp4"
 
-# Keyword extraction mode: "rake" (offline) or "gemini" (free AI Studio key)
-KEYWORD_MODE        = "gemini"  # using Gemini 2.5 Flash (free tier)
+# Keyword extraction mode: forced to "groq" using rotating keys
+KEYWORD_MODE        = "groq"
+
 
 # Clip interval: force a new clip search every N seconds within a long segment.
 # Set to 0 to disable (one clip per chunk, looped if needed).

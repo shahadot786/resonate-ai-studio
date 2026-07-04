@@ -934,10 +934,6 @@ function setupAspectRatio() {
                 const chk = document.getElementById('check-review-before-merge');
                 if (chk) chk.checked = !!cfg.review_before_merge;
             }
-            if (cfg.youtube_api_key !== undefined) {
-                const yt = document.getElementById('inp-youtube-api-key');
-                if (yt) yt.value = cfg.youtube_api_key || '';
-            }
             if (cfg.groq_api_keys !== undefined) {
                 const groq = document.getElementById('inp-groq-api-keys');
                 if (groq) groq.value = cfg.groq_api_keys || '';
@@ -984,21 +980,7 @@ function setupAspectRatio() {
         });
     }
 
-    // YouTube CC API key — save on change
-    const ytKeyInp = document.getElementById('inp-youtube-api-key');
-    if (ytKeyInp) {
-        let ytSaveTimer = null;
-        ytKeyInp.addEventListener('input', () => {
-            clearTimeout(ytSaveTimer);
-            ytSaveTimer = setTimeout(() => {
-                fetch('/api/video/config', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ youtube_api_key: ytKeyInp.value.trim() }),
-                }).catch(() => {});
-            }, 800);  // debounce 800ms
-        });
-    }
+
 
     // Groq rotating API keys — save on change
     const groqKeyInp = document.getElementById('inp-groq-api-keys');
