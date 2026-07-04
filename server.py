@@ -253,6 +253,58 @@ async def save_script(request: Request):
     return {"ok": True, "lines": len([l for l in text.splitlines() if l.strip()])}
 
 
+def _call_groq_completions(prompt: str) -> str:
+    """Helper to run a prompt against Groq API using rotating keys."""
+    import requests
+    groq_keys = getattr(config, "GROQ_API_KEYS", [])
+    if not groq_keys:
+        raise ValueError("No Groq API keys configured")
+
+    for key in groq_keys:
+        try:
+            resp = requests.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "llama-3.3-70b-versatile",
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.2,
+                    "max_tokens": 1500,
+                },
+                timeout=20
+            )
+            # Track stats using core.video's helper
+            try:
+                from core.video import _update_groq_stats
+                if resp.status_code == 200:
+                    _update_groq_stats(key, success=True, rate_limited=False)
+                elif resp.status_code == 429:
+                    _update_groq_stats(key, success=False, rate_limited=True)
+                else:
+                    _update_groq_stats(key, success=False, rate_limited=False)
+            except Exception:
+                pass
+
+            if resp.status_code == 200:
+                body = resp.json()
+                return body["choices"][0]["message"]["content"].strip()
+            elif resp.status_code == 429:
+                print(f"  ⚠ Groq Key {key[:12]}... rate limited (429), rotating...")
+                continue
+        except Exception as e:
+            print(f"  ⚠ Groq completions error: {e}")
+            try:
+                from core.video import _update_groq_stats
+                _update_groq_stats(key, success=False, rate_limited=False)
+            except Exception:
+                pass
+            continue
+    raise RuntimeError("All Groq keys failed or rate-limited")
+
+
 @app.post("/api/script/polish")
 async def polish_script(request: Request):
     data = await request.json()
@@ -260,36 +312,23 @@ async def polish_script(request: Request):
     if not text:
         return {"ok": True, "text": ""}
         
-    use_gemini = False
-    gemini_key = getattr(config, "GEMINI_API_KEY", "")
-    if gemini_key and gemini_key.strip():
-        use_gemini = True
+    prompt = (
+        "You are a text processing expert. Your task is to clean up the provided script so it can be read smoothly by a TTS engine.\n\n"
+        "Rules:\n"
+        "1. Rewrite all numbers and numerical values into their fully spelled-out word equivalents. E.g., '1995' to 'nineteen ninety-five', '4.5' to 'four point five', '100' to 'one hundred', '$20' to 'twenty dollars'.\n"
+        "2. Convert all abbreviations to their full spoken equivalents. E.g., 'Mr.' to 'Mister', 'Dr.' to 'Doctor', 'Mrs.' to 'Missus', 'St.' to 'Street', 'vs.' to 'versus', 'etc.' to 'et cetera'.\n"
+        "3. Keep all voice and emotion override tags (like [voice:...] and [emotion:...]) exactly intact at the start or inline.\n"
+        "4. Do not output any notes, introductory phrases, or markdown wrapper blocks. Return ONLY the polished script text exactly.\n\n"
+        f"Script:\n{text}"
+    )
 
-    if use_gemini:
-        import requests
-        prompt = (
-            "You are a text processing expert. Your task is to clean up the provided script so it can be read smoothly by a TTS engine.\n\n"
-            "Rules:\n"
-            "1. Rewrite all numbers and numerical values into their fully spelled-out word equivalents. E.g., '1995' to 'nineteen ninety-five', '4.5' to 'four point five', '100' to 'one hundred', '$20' to 'twenty dollars'.\n"
-            "2. Convert all abbreviations to their full spoken equivalents. E.g., 'Mr.' to 'Mister', 'Dr.' to 'Doctor', 'Mrs.' to 'Missus', 'St.' to 'Street', 'vs.' to 'versus', 'etc.' to 'et cetera'.\n"
-            "3. Keep all voice and emotion override tags (like [voice:...] and [emotion:...]) exactly intact at the start or inline.\n"
-            "4. Do not output any notes, introductory phrases, or markdown wrapper blocks. Return ONLY the polished script text exactly.\n\n"
-            f"Script:\n{text}"
-        )
-        try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={gemini_key}"
-            payload = {
-                "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {"temperature": 0.1}
-            }
-            res = requests.post(url, json=payload, timeout=15)
-            res_data = res.json()
-            ai_text = res_data["candidates"][0]["content"]["parts"][0]["text"].strip()
-            if ai_text.startswith("```"):
-                ai_text = "\n".join([line for line in ai_text.splitlines() if not line.startswith("```")])
-            return {"ok": True, "text": ai_text, "mode": "ai"}
-        except Exception as e:
-            print(f"Gemini script polish error: {e}")
+    try:
+        ai_text = _call_groq_completions(prompt)
+        if ai_text.startswith("```"):
+            ai_text = "\n".join([line for line in ai_text.splitlines() if not line.startswith("```")])
+        return {"ok": True, "text": ai_text, "mode": "ai"}
+    except Exception as e:
+        print(f"Groq script polish error: {e}")
 
     # Fallback to local rule-based regex replacement (Offline)
     import re
@@ -343,44 +382,30 @@ async def analyze_script(request: Request):
     lines = text.splitlines()
     analyzed_lines = []
     
-    use_gemini = False
-    gemini_key = getattr(config, "GEMINI_API_KEY", "")
-    if gemini_key and gemini_key.strip():
-        use_gemini = True
-
-    if use_gemini:
-        import requests
-        prompt = (
-            "You are a professional audio drama and audiobook script director. "
-            "Your task is to take this script and enhance it by injecting appropriate tags "
-            "for Kokoro TTS at the start of each line where a mood changes or a voice switches.\n\n"
-            "Rules:\n"
-            "- Available voice overrides: [voice:af_sarah], [voice:af_bella], [voice:af_heart], "
-            "[voice:am_adam], [voice:am_michael], [voice:bf_emma], [voice:bm_george]\n"
-            "- Available emotion overrides: [emotion:Simmering Anger] (for rage/heat), "
-            "[emotion:Cinematic Narrative] (standard narration), [emotion:Whispered Suspense] (fear/secrecy/night), "
-            "[emotion:Cold Precision] (flatness/precision), [emotion:Raw Vulnerability] (sorrow/pain), "
-            "[emotion:Urgent Excitement] (energy), [emotion:Empowered Resolution] (confidence), "
-            "[emotion:Bitter Sarcasm] (irony)\n"
-            "- Keep spacing clean. Inject tags at the very start of lines where appropriate.\n"
-            "- Do not add metadata, titles, or formatting wrapper text. Output ONLY the updated script text exactly.\n\n"
-            f"Script:\n{text}"
-        )
-        
-        try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={gemini_key}"
-            payload = {
-                "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {"temperature": 0.2}
-            }
-            res = requests.post(url, json=payload, timeout=15)
-            res_data = res.json()
-            ai_text = res_data["candidates"][0]["content"]["parts"][0]["text"].strip()
-            if ai_text.startswith("```"):
-                ai_text = "\n".join([line for line in ai_text.splitlines() if not line.startswith("```")])
-            return {"ok": True, "text": ai_text, "mode": "ai"}
-        except Exception as e:
-            print(f"Gemini script analysis error: {e}")
+    prompt = (
+        "You are a professional audio drama and audiobook script director. "
+        "Your task is to take this script and enhance it by injecting appropriate tags "
+        "for Kokoro TTS at the start of each line where a mood changes or a voice switches.\n\n"
+        "Rules:\n"
+        "- Available voice overrides: [voice:af_sarah], [voice:af_bella], [voice:af_heart], "
+        "[voice:am_adam], [voice:am_michael], [voice:bf_emma], [voice:bm_george]\n"
+        "- Available emotion overrides: [emotion:Simmering Anger] (for rage/heat), "
+        "[emotion:Cinematic Narrative] (standard narration), [emotion:Whispered Suspense] (fear/secrecy/night), "
+        "[emotion:Cold Precision] (flatness/precision), [emotion:Raw Vulnerability] (sorrow/pain), "
+        "[emotion:Urgent Excitement] (energy), [emotion:Empowered Resolution] (confidence), "
+        "[emotion:Bitter Sarcasm] (irony)\n"
+        "- Keep spacing clean. Inject tags at the very start of lines where appropriate.\n"
+        "- Do not add metadata, titles, or formatting wrapper text. Output ONLY the updated script text exactly.\n\n"
+        f"Script:\n{text}"
+    )
+    
+    try:
+        ai_text = _call_groq_completions(prompt)
+        if ai_text.startswith("```"):
+            ai_text = "\n".join([line for line in ai_text.splitlines() if not line.startswith("```")])
+        return {"ok": True, "text": ai_text, "mode": "ai"}
+    except Exception as e:
+        print(f"Groq script analysis error: {e}")
 
     # Fallback to pure offline rule-based heuristics
     import re

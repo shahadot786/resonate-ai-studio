@@ -2,7 +2,7 @@
 # core/video.py — B-Roll video pipeline
 #
 # Pipeline per chunk:
-#   1. Extract search keyword (RAKE offline or Gemini Flash)
+#   1. Extract search keyword (Groq Llama-3.3 with rotating keys)
 #   2. Search video: Pexels → Pixabay → Coverr → Wikimedia
 #   3. Fallback to image: Pexels → Pixabay → Wikimedia
 #   4. Trim/loop video  OR  convert image → video (Ken Burns)
