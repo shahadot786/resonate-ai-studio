@@ -78,8 +78,8 @@ def _gemini_keyword(text: str, api_key: str) -> str:
                 continue
         raise last_err
     except Exception as e:
-        print(f"  ⚠ Gemini keyword failed ({e}), falling back to RAKE")
-        return _rake_keyword(text)
+        print(f"  ⚠ Gemini keyword failed ({e}), falling back")
+        return ""
 
 
 def _gemini_keyword_alternatives(text: str, api_key: str) -> list[str]:
@@ -87,7 +87,6 @@ def _gemini_keyword_alternatives(text: str, api_key: str) -> list[str]:
     Generate 4-5 semantically diverse stock-search queries for a script line.
     The first is the best match; the rest are fallbacks with different visual angles.
     Returns a list of 2-3 word lowercase search queries.
-    Falls back to [_rake_keyword(text)] on error.
     """
     try:
         from google import genai
@@ -122,27 +121,183 @@ def _gemini_keyword_alternatives(text: str, api_key: str) -> list[str]:
             except Exception:
                 continue
     except Exception as e:
-        print(f"  ⚠ Gemini alternatives failed ({e}), using RAKE")
-    # Fallback: single keyword from RAKE
-    return [_rake_keyword(text)]
+        print(f"  ⚠ Gemini alternatives failed ({e})")
+    return []
 
 
-def extract_keyword(text: str, mode: str = "rake", api_key: str = "") -> str:
+def _groq_keyword_alternatives(text: str, groq_keys: list[str]) -> list[str]:
+    """
+    Generate 5 semantically diverse stock-search queries for a script line using Groq.
+    Rotates through the list of keys if rate limited (429).
+    """
+    if not groq_keys:
+        return []
+
+    prompt = (
+        "You are an expert B-roll director for YouTube narration videos. Your job is to pick VISUAL stock footage search keywords.\n\n"
+        f"NARRATION LINE: \"{text}\"\n\n"
+        "STRICT RULES:\n"
+        "- Think about what a CAMERA would show on screen, not what the words literally say\n"
+        "- Convert abstract phrases to concrete visuals: 'bank account ripped open' = 'empty wallet stress'\n"
+        "- Convert time phrases like 'four days later' to mood/scene visuals: 'dim office morning'\n"
+        "- NEVER include names (Derek, Sandra etc) — replace with visual: 'empty desk'\n"
+        "- NEVER include transition words (later, suddenly, then) — show the SCENE instead\n"
+        "- Each keyword must be 2-3 words, searchable on stock sites like Pexels\n\n"
+        "Return exactly 5 different visual search keywords, one per line, NO numbering, NO punctuation, NO explanation. Just the 5 keywords."
+    )
+
+    for key in groq_keys:
+        try:
+            resp = requests.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "llama-3.3-70b-versatile",
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.7,
+                    "max_tokens": 100,
+                },
+                timeout=10
+            )
+            if resp.status_code == 200:
+                body = resp.json()
+                content = body["choices"][0]["message"]["content"].strip()
+                lines = [line.strip().lower() for line in content.splitlines() if line.strip()]
+                cleaned = []
+                for line in lines:
+                    line = re.sub(r"^\d+\.\s*", "", line)
+                    line = re.sub(r"^[-*+]\s*", "", line)
+                    line = re.sub(r'[."\'`!?,;:]', "", line).strip()
+                    if line:
+                        cleaned.append(line)
+                if len(cleaned) >= 2:
+                    return cleaned[:5]
+            elif resp.status_code == 429:
+                print(f"  ⚠ Groq Key {key[:12]}... hit rate limit (429), rotating to next key...")
+                continue
+            else:
+                print(f"  ⚠ Groq Key {key[:12]}... error {resp.status_code}: {resp.text[:100]}")
+        except Exception as e:
+            print(f"  ⚠ Groq key extraction error: {e}")
+            continue
+    return []
+
+
+def _groq_subclip_keyword_alternatives(text: str, n_subs: int, groq_keys: list[str]) -> list[list[str]]:
+    """
+    For each of n_subs sub-clips, return a list of 5 diverse search query alternatives using Groq.
+    Returns a list[list[str]] of shape [n_subs][n_alternatives].
+    """
+    if not groq_keys:
+        return []
+
+    prompt = (
+        "You are an expert YouTube video editor and B-roll director.\n"
+        "Script segment:\n"
+        f"\"{text}\"\n\n"
+        f"This segment will be split into exactly {n_subs} sequential video clips.\n"
+        f"For EACH clip, provide exactly 5 different stock video search queries, "
+        "ordered from MOST to LEAST relevant for that clip's moment in the script.\n\n"
+        "STRICT RULES:\n"
+        "- Think about what a CAMERA would show on screen, not what the words literally say\n"
+        "- Convert metaphors to concrete visuals: 'bank account ripped open' = 'empty wallet'\n"
+        "- Convert time phrases like 'four days later' to mood/scene visuals: 'dim office morning'\n"
+        "- NEVER include names (Derek, Sandra etc) — replace with visual: 'empty desk'\n"
+        "- NEVER include transition words (later, suddenly, then) — show the SCENE instead\n"
+        "- Each keyword must be 2-3 words, searchable on stock sites like Pexels\n\n"
+        f"Return ONLY a valid JSON array of exactly {n_subs} arrays, each containing exactly 5 strings.\n"
+        f"Example for n=2: [[\"phone call office\", \"man on phone\", \"business call\", \"smartphone desk\", \"office worker calling\"], "
+        "[\"empty wallet\", \"low bank balance\", \"stressed businessman\", \"financial crisis\", \"broke person\"]]"
+    )
+
+    for key in groq_keys:
+        try:
+            resp = requests.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "llama-3.3-70b-versatile",
+                    "response_format": {"type": "json_object"},
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": "You are a helpful assistant that always outputs JSON. The root JSON object must contain a key 'data' which is the array of arrays."
+                        },
+                        {"role": "user", "content": prompt}
+                    ],
+                    "temperature": 0.7,
+                    "max_tokens": 500,
+                },
+                timeout=15
+            )
+            if resp.status_code == 200:
+                body = resp.json()
+                content = body["choices"][0]["message"]["content"].strip()
+                data = json.loads(content)
+                if isinstance(data, dict) and "data" in data:
+                    grid = data["data"]
+                else:
+                    grid = data
+
+                if isinstance(grid, list) and len(grid) == n_subs:
+                    result = []
+                    valid = True
+                    for row in grid:
+                        if not isinstance(row, list) or len(row) < 2:
+                            valid = False
+                            break
+                        cleaned = [re.sub(r"[.!?,;]+$", "", str(k).strip().lower()).strip() for k in row]
+                        cleaned = [k for k in cleaned if k][:5]
+                        result.append(cleaned)
+                    if valid:
+                        return result
+            elif resp.status_code == 429:
+                print(f"  ⚠ Groq Key {key[:12]}... hit rate limit (429), rotating...")
+                continue
+            else:
+                print(f"  ⚠ Groq Key {key[:12]}... error {resp.status_code}: {resp.text[:100]}")
+        except Exception as e:
+            print(f"  ⚠ Groq subclip extraction error: {e}")
+            continue
+    return []
+
+
+def extract_keyword(text: str, mode: str = "rake", api_key: str = "", groq_keys: list[str] = None) -> str:
     """Extract a visual search keyword from a narration chunk."""
-    if mode == "gemini" and api_key:
-        return _gemini_keyword(text, api_key)
+    if mode in ("gemini", "groq", "auto"):
+        alts = extract_keyword_alternatives(text, mode, api_key, groq_keys)
+        if alts:
+            return alts[0]
     return _rake_keyword(text)
 
 
-def extract_keyword_alternatives(text: str, mode: str = "rake", api_key: str = "") -> list[str]:
+def extract_keyword_alternatives(text: str, mode: str = "rake", api_key: str = "", groq_keys: list[str] = None) -> list[str]:
     """
     Return a list of diverse search query alternatives for a script line.
-    Gemini mode returns 5 semantically different queries; RAKE returns 1.
+    Gemini/Groq mode returns 5 semantically different queries; RAKE returns 1.
     """
-    if mode == "gemini" and api_key:
-        return _gemini_keyword_alternatives(text, api_key)
+    if mode in ("gemini", "groq", "auto"):
+        # 1. Try Gemini first if key is present
+        if api_key:
+            res = _gemini_keyword_alternatives(text, api_key)
+            if len(res) >= 2:
+                return res
+            print("  ⚠ Gemini returned fallback/failed, attempting Groq...")
+
+        # 2. Try Groq (with rotating keys)
+        if groq_keys:
+            res = _groq_keyword_alternatives(text, groq_keys)
+            if res:
+                return res
+
+    # 3. Final fallback to RAKE
     kw = _rake_keyword(text)
-    # Generate simple word-subset fallbacks for RAKE mode
     words = kw.split()
     alts = [kw]
     if len(words) >= 2:
@@ -151,18 +306,19 @@ def extract_keyword_alternatives(text: str, mode: str = "rake", api_key: str = "
     return list(dict.fromkeys(alts))  # deduplicated
 
 
-def extract_subclip_keywords(text: str, n_subs: int, mode: str = "rake", api_key: str = "") -> list[str]:
+
+def extract_subclip_keywords(text: str, n_subs: int, mode: str = "rake", api_key: str = "", groq_keys: list[str] = None) -> list[str]:
     """
     Extract exactly n_subs primary keywords sequentially representing the timeline of the text.
     Returns a flat list of n_subs primary keyword strings (for display/logging).
     Use extract_subclip_keyword_alternatives for the full alternatives-per-subclip grid.
     """
-    alts_grid = extract_subclip_keyword_alternatives(text, n_subs, mode, api_key)
+    alts_grid = extract_subclip_keyword_alternatives(text, n_subs, mode, api_key, groq_keys)
     return [alts[0] for alts in alts_grid]
 
 
 def extract_subclip_keyword_alternatives(
-    text: str, n_subs: int, mode: str = "rake", api_key: str = ""
+    text: str, n_subs: int, mode: str = "rake", api_key: str = "", groq_keys: list[str] = None
 ) -> list[list[str]]:
     """
     For each of n_subs sub-clips, return a list of 3-5 diverse stock-search alternatives.
@@ -170,10 +326,10 @@ def extract_subclip_keyword_alternatives(
     The first entry in each inner list is the best/primary match.
     """
     if n_subs <= 1:
-        return [extract_keyword_alternatives(text, mode, api_key)]
+        return [extract_keyword_alternatives(text, mode, api_key, groq_keys)]
 
     # 1. Try Gemini if enabled — ask for a 2D grid: n_subs rows × 5 alternatives each
-    if mode == "gemini" and api_key:
+    if mode in ("gemini", "groq", "auto") and api_key:
         try:
             from google import genai
             client = genai.Client(api_key=api_key)
@@ -220,7 +376,13 @@ def extract_subclip_keyword_alternatives(
         except Exception as e:
             print(f"  ⚠ Gemini subclip alternatives failed: {e}")
 
-    # 2. Offline fallback — split text into clauses, run RAKE on each
+    # 2. Try Groq (with rotating keys) as fallback
+    if mode in ("gemini", "groq", "auto") and groq_keys:
+        res = _groq_subclip_keyword_alternatives(text, n_subs, groq_keys)
+        if res:
+            return res
+
+    # 3. Offline fallback — split text into clauses, run RAKE on each
     clauses = [c.strip() for c in re.split(r'[.,;!?]', text) if c.strip()]
     if not clauses:
         clauses = [text]
@@ -249,6 +411,7 @@ def extract_subclip_keyword_alternatives(
     while len(result) < n_subs:
         result.append(result[-1] if result else ["broll video"])
     return result[:n_subs]
+
 
 
 # ── Media search — Videos ────────────────────────────────────
@@ -823,6 +986,7 @@ def build_segment(
     coverr_key: str = "",
     gemini_key: str = "",
     youtube_key: str = "",
+    groq_keys: list[str] = None,
     keyword_mode: str = "rake",
     resolution: str = "1920x1080",
     fps: int = 30,
@@ -854,7 +1018,8 @@ def build_segment(
 
     # ── 2. Extract keyword ────────────────────────────────────
     _emit("🔍 Extracting keyword…")
-    keyword = extract_keyword(text, mode=keyword_mode, api_key=gemini_key)
+    keyword = extract_keyword(text, mode=keyword_mode, api_key=gemini_key, groq_keys=groq_keys)
+
     _emit(f"🔑 Keyword: «{keyword}»")
 
     result = {"index": index, "keyword": keyword, "source": None, "type": None,
@@ -930,8 +1095,10 @@ def build_segment(
         sub_dur = duration / n_subs   # distribute evenly to avoid tiny last clip
         _emit(f"⏱ Clip interval {clip_interval:.0f}s → {n_subs} sub-clips of {sub_dur:.1f}s each")
 
-        # Extract N×5 alternatives grid from Gemini
-        sub_alts_grid = extract_subclip_keyword_alternatives(text, n_subs, mode=keyword_mode, api_key=gemini_key)
+        # Extract N×5 alternatives grid from Gemini/Groq
+        sub_alts_grid = extract_subclip_keyword_alternatives(
+            text, n_subs, mode=keyword_mode, api_key=gemini_key, groq_keys=groq_keys
+        )
         primary_kws = [alts[0] for alts in sub_alts_grid]
         _emit(f"🔑 Sub-clip primary keywords: {', '.join([f'«{k}»' for k in primary_kws])}")
 
@@ -1019,7 +1186,9 @@ def build_segment(
     MAX_CLIPS = 5
 
     # Get diverse alternatives for the main keyword instead of word-chopped variants
-    kw_alternatives = extract_keyword_alternatives(text, mode=keyword_mode, api_key=gemini_key)
+    kw_alternatives = extract_keyword_alternatives(
+        text, mode=keyword_mode, api_key=gemini_key, groq_keys=groq_keys
+    )
     _emit(f"🔑 Keyword alternatives: {kw_alternatives}")
 
     raw_clips: list[str] = []

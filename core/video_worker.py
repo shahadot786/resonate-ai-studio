@@ -41,6 +41,7 @@ def main():
     coverr_key          = cfg.get("coverr_api_key", "")
     gemini_key          = cfg.get("gemini_api_key", "")
     youtube_key         = cfg.get("youtube_api_key", "")
+    groq_keys           = cfg.get("groq_api_keys", [])
     keyword_mode        = cfg.get("keyword_mode", "rake")
     resolution          = cfg.get("resolution", "1920x1080")
     fps                 = cfg.get("fps", 30)
@@ -129,6 +130,7 @@ def main():
             coverr_key=coverr_key,
             gemini_key=gemini_key,
             youtube_key=youtube_key,
+            groq_keys=groq_keys,
             keyword_mode=keyword_mode,
             resolution=resolution,
             fps=fps,

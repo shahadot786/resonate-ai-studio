@@ -938,6 +938,10 @@ function setupAspectRatio() {
                 const yt = document.getElementById('inp-youtube-api-key');
                 if (yt) yt.value = cfg.youtube_api_key || '';
             }
+            if (cfg.groq_api_keys !== undefined) {
+                const groq = document.getElementById('inp-groq-api-keys');
+                if (groq) groq.value = cfg.groq_api_keys || '';
+            }
         })
         .catch(() => {});
 
@@ -991,6 +995,22 @@ function setupAspectRatio() {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ youtube_api_key: ytKeyInp.value.trim() }),
+                }).catch(() => {});
+            }, 800);  // debounce 800ms
+        });
+    }
+
+    // Groq rotating API keys — save on change
+    const groqKeyInp = document.getElementById('inp-groq-api-keys');
+    if (groqKeyInp) {
+        let groqSaveTimer = null;
+        groqKeyInp.addEventListener('input', () => {
+            clearTimeout(groqSaveTimer);
+            groqSaveTimer = setTimeout(() => {
+                fetch('/api/video/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ groq_api_keys: groqKeyInp.value.trim() }),
                 }).catch(() => {});
             }, 800);  // debounce 800ms
         });

@@ -952,6 +952,7 @@ async def _run_video_worker():
         "coverr_api_key":      config.COVERR_API_KEY,
         "gemini_api_key":      config.GEMINI_API_KEY,
         "youtube_api_key":     getattr(config, "YOUTUBE_API_KEY", ""),
+        "groq_api_keys":       getattr(config, "GROQ_API_KEYS", []),
         "keyword_mode":        config.KEYWORD_MODE,
         "resolution":          config.VIDEO_RESOLUTION,
         "fps":                 config.VIDEO_FPS,
@@ -1194,6 +1195,7 @@ async def get_video_config():
         "coverr_api_key":      config.COVERR_API_KEY,
         "gemini_api_key":      config.GEMINI_API_KEY,
         "youtube_api_key":     getattr(config, "YOUTUBE_API_KEY", ""),
+        "groq_api_keys":       ",".join(getattr(config, "GROQ_API_KEYS", [])),
         "keyword_mode":        config.KEYWORD_MODE,
         "resolution":          config.VIDEO_RESOLUTION,
         "fps":                 config.VIDEO_FPS,
@@ -1220,6 +1222,12 @@ async def update_video_config(request: Request):
     for key, attr in mapping.items():
         if key in data:
             setattr(config, attr, data[key])
+    if "groq_api_keys" in data:
+        raw_val = data["groq_api_keys"]
+        if isinstance(raw_val, list):
+            config.GROQ_API_KEYS = [k.strip() for k in raw_val if k.strip()]
+        else:
+            config.GROQ_API_KEYS = [k.strip() for k in str(raw_val).split(",") if k.strip()]
     return {"ok": True}
 
 
@@ -1303,6 +1311,7 @@ async def replace_video_segment(index: int, request: Request):
             coverr_key=config.COVERR_API_KEY,
             gemini_key=config.GEMINI_API_KEY,
             youtube_key=getattr(config, "YOUTUBE_API_KEY", ""),
+            groq_keys=getattr(config, "GROQ_API_KEYS", []),
             keyword_mode="rake",   # use RAKE so it returns the keyword as-is
             resolution=config.VIDEO_RESOLUTION,
             fps=config.VIDEO_FPS,

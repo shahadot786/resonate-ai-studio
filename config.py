@@ -94,6 +94,8 @@ PIXABAY_API_KEY  = _os.getenv("PIXABAY_API_KEY", "")
 COVERR_API_KEY   = _os.getenv("COVERR_API_KEY",  "")
 GEMINI_API_KEY   = _os.getenv("GEMINI_API_KEY",  "")
 YOUTUBE_API_KEY  = _os.getenv("YOUTUBE_API_KEY", "")
+GROQ_API_KEYS    = [k.strip() for k in _os.getenv("GROQ_API_KEYS", "").split(",") if k.strip()]
+
 
 
 # Video output settings
