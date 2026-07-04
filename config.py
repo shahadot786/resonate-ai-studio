@@ -80,10 +80,21 @@ VOICES = [
 ]
 
 # ── B-Roll Video Pipeline ────────────────────────────────────
-PEXELS_API_KEY      = "pOccPxW2ezZ5IwOsBYo7VDRiRj2zXUjk9TCOXHeGIZyxFekaMSUuxL5s"
-PIXABAY_API_KEY     = "56526229-bf7604a89c5531497f60e7f3c"
-COVERR_API_KEY      = ""   # optional – get free at coverr.co/api
-GEMINI_API_KEY      = "AQ.Ab8RN6L_hnsAPvlwPUd8Q6YUoYYMNnIVyaC6fJ4i5mmEgy3rLg"
+import os as _os
+
+# Load .env file if present (requires python-dotenv, falls back silently)
+try:
+    from dotenv import load_dotenv as _load_dotenv
+    _load_dotenv(_os.path.join(_os.path.dirname(__file__), ".env"))
+except ImportError:
+    pass  # python-dotenv not installed — keys must be set as real env vars
+
+PEXELS_API_KEY   = _os.getenv("PEXELS_API_KEY",  "")
+PIXABAY_API_KEY  = _os.getenv("PIXABAY_API_KEY", "")
+COVERR_API_KEY   = _os.getenv("COVERR_API_KEY",  "")
+GROQ_API_KEYS    = [k.strip() for k in _os.getenv("GROQ_API_KEYS", "").split(",") if k.strip()]
+
+
 
 # Video output settings
 VIDEO_RESOLUTION    = "1920x1080"
@@ -92,5 +103,14 @@ VIDEO_DIR           = "outputs/video"
 VIDEO_SEGMENTS_DIR  = "outputs/video/segments"
 VIDEO_OUTPUT_FILE   = "outputs/video/final_video.mp4"
 
-# Keyword extraction mode: "rake" (offline) or "gemini" (free AI Studio key)
-KEYWORD_MODE        = "gemini"  # using Gemini 2.5 Flash (free tier)
+# Keyword extraction mode: forced to "groq" using rotating keys
+KEYWORD_MODE        = "groq"
+
+
+# Clip interval: force a new clip search every N seconds within a long segment.
+# Set to 0 to disable (one clip per chunk, looped if needed).
+VIDEO_CLIP_INTERVAL = 10
+
+# Review before merge: pause pipeline after all clips are found so you can
+# preview and replace clips before the final video is assembled.
+VIDEO_REVIEW_BEFORE_MERGE = True

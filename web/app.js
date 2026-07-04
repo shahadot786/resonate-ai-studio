@@ -75,6 +75,7 @@ const DOM = {
 
 let activePlayingChunk = null;
 let sseSource = null;
+let _previewSegIndex = -1;
 
 // ── PIPELINE MODE STATE ──
 // 'audio' | 'both' | 'video'
@@ -666,13 +667,18 @@ function displayAudioPlayer(totalDuration, mp3Exists) {
     
     DOM.btnDownloadWav.classList.remove('hidden');
     DOM.btnDownloadMp3.classList.toggle('hidden', !mp3Exists);
+
+    // Reset master player source to force cache bust on next play
+    DOM.audioMainNode.removeAttribute('src');
+    DOM.btnPlaybackToggle.textContent = '▶';
 }
 
 function setupAudioPlaybackControls() {
     DOM.btnPlaybackToggle.addEventListener('click', () => {
-        if (!DOM.audioMainNode.src || !activePlayingChunk) {
-            DOM.audioMainNode.src = '/api/audio/final';
+        if (!DOM.audioMainNode.src || activePlayingChunk) {
+            DOM.audioMainNode.src = `/api/audio/final?t=${Date.now()}`;
             DOM.playbackTitle.textContent = 'Full Output Narration';
+            activePlayingChunk = null;
         }
         
         if (DOM.audioMainNode.paused) {
@@ -904,6 +910,12 @@ function setupEventListeners() {
 
     // ── VIDEO AUTO-PIPELINE SETUP ────────────────────────────
     setupVideoPipeline();
+
+    // ── VIDEO PREVIEW MODAL ──────────────────────────────────
+    setupVideoPreviewModal();
+
+    // ── B-ROLL REVIEW DRAWER ──────────────────────────────────
+    setupReviewDrawer();
 }
 
 // ============================================================
@@ -914,20 +926,31 @@ function setupAspectRatio() {
     const grid = document.getElementById('aspect-ratio-grid');
     if (!grid) return;
 
-    // Load current resolution from server and highlight active button
+    // Load current video config from server
     fetch('/api/video/config')
         .then(r => r.json())
         .then(cfg => {
             if (cfg.resolution) setActiveAR(cfg.resolution);
+            if (cfg.clip_interval !== undefined) {
+                const inp = document.getElementById('num-clip-interval');
+                if (inp) inp.value = cfg.clip_interval;
+            }
+            if (cfg.review_before_merge !== undefined) {
+                const chk = document.getElementById('check-review-before-merge');
+                if (chk) chk.checked = !!cfg.review_before_merge;
+            }
+            if (cfg.groq_api_keys !== undefined) {
+                const groq = document.getElementById('inp-groq-api-keys');
+                if (groq) groq.value = cfg.groq_api_keys || '';
+            }
         })
         .catch(() => {});
 
-    // Click handler — update active state and save to server
+    // Aspect ratio click
     grid.querySelectorAll('.ar-btn').forEach(btn => {
         btn.addEventListener('click', () => {
             const res = btn.dataset.res;
             setActiveAR(res);
-            // Persist to server
             fetch('/api/video/config', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -935,6 +958,50 @@ function setupAspectRatio() {
             }).catch(() => {});
         });
     });
+
+    // Clip interval change
+    const clipInput = document.getElementById('num-clip-interval');
+    if (clipInput) {
+        clipInput.addEventListener('change', () => {
+            const val = Math.max(0, parseInt(clipInput.value) || 0);
+            clipInput.value = val;
+            fetch('/api/video/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ clip_interval: val }),
+            }).catch(() => {});
+        });
+    }
+
+    // Review before merge toggle
+    const reviewChk = document.getElementById('check-review-before-merge');
+    if (reviewChk) {
+        reviewChk.addEventListener('change', () => {
+            fetch('/api/video/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ review_before_merge: reviewChk.checked }),
+            }).catch(() => {});
+        });
+    }
+
+
+
+    // Groq rotating API keys — save on change
+    const groqKeyInp = document.getElementById('inp-groq-api-keys');
+    if (groqKeyInp) {
+        let groqSaveTimer = null;
+        groqKeyInp.addEventListener('input', () => {
+            clearTimeout(groqSaveTimer);
+            groqSaveTimer = setTimeout(() => {
+                fetch('/api/video/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ groq_api_keys: groqKeyInp.value.trim() }),
+                }).catch(() => {});
+            }, 800);  // debounce 800ms
+        });
+    }
 }
 
 function setActiveAR(resolution) {
@@ -1005,6 +1072,8 @@ async function startVideoGeneration() {
         const res  = await fetch('/api/video/create', { method: 'POST' });
         const data = await res.json();
         if (!data.ok) {
+            // 409 = already running — not an error to show the user
+            if (res.status === 409) return;
             document.getElementById('video-status-msg').textContent =
                 '❌ ' + (data.error || 'Could not start video');
         }
@@ -1035,7 +1104,8 @@ function handleVideoProgress(data) {
     }
 
     // Status label
-    const icons = { idle:'⚙', searching:'🔍', merging:'🎞', done:'✅', error:'❌', cancelled:'⛔' };
+    const icons = { idle:'⚙', searching:'🔍', merging:'🎞', done:'✅', error:'❌',
+                    cancelled:'⛔', review_ready:'🎬', loading:'⚡' };
     document.getElementById('video-status-msg').textContent =
         (icons[status] || '⚙') + ' ' + (message || '');
 
@@ -1044,14 +1114,53 @@ function handleVideoProgress(data) {
         segments_done.forEach(seg => renderChip(seg));
     }
 
-    // Done — show video player
+    // Review Ready — open the Review Drawer (70% wide), show trigger buttons
+    if (status === 'review_ready') {
+        document.getElementById('video-progress-bar').style.width = '100%';
+        buildReviewPanel(segments_done || []);
+        
+        // Show the review trigger button so the user can re-open it
+        const triggerRow = document.getElementById('review-trigger-row');
+        if (triggerRow) triggerRow.classList.remove('hidden');
+        const toolbarBtn = document.getElementById('btn-open-review-drawer-toolbar');
+        if (toolbarBtn) toolbarBtn.classList.remove('hidden');
+
+        // Automatically open the drawer on initial transition
+        const drawer = document.getElementById('review-drawer');
+        const backdrop = document.getElementById('review-backdrop');
+        if (drawer && backdrop && drawer.classList.contains('hidden')) {
+            drawer.classList.remove('hidden');
+            backdrop.classList.remove('hidden');
+        }
+
+        // Hide final player until merge is done
+        document.getElementById('video-output-player').classList.add('hidden');
+    } else {
+        const triggerRow = document.getElementById('review-trigger-row');
+        if (triggerRow) triggerRow.classList.add('hidden');
+        const toolbarBtn = document.getElementById('btn-open-review-drawer-toolbar');
+        if (toolbarBtn) toolbarBtn.classList.add('hidden');
+        
+        const drawer = document.getElementById('review-drawer');
+        const backdrop = document.getElementById('review-backdrop');
+        if (drawer && status !== 'review_ready') drawer.classList.add('hidden');
+        if (backdrop && status !== 'review_ready') backdrop.classList.add('hidden');
+    }
+
+    // Done — show video player, hide review
     if (status === 'done') {
         document.getElementById('video-progress-bar').style.width = '100%';
+        const drawer = document.getElementById('review-drawer');
+        const backdrop = document.getElementById('review-backdrop');
+        if (drawer) drawer.classList.add('hidden');
+        if (backdrop) backdrop.classList.add('hidden');
+        const toolbarBtn = document.getElementById('btn-open-review-drawer-toolbar');
+        if (toolbarBtn) toolbarBtn.classList.add('hidden');
         revealVideoPlayer();
     }
 }
 
-// ── Segment chip ──────────────────────────────────────────────
+// ── Segment chip — clickable for preview ─────────────────────
 
 function renderChip(seg) {
     const row = document.getElementById('video-chip-row');
@@ -1074,7 +1183,12 @@ function renderChip(seg) {
 
     chip.className = `vchip ${cls}`;
     chip.innerHTML = `<span class="vchip-dot"></span>${typeEmoji} #${seg.index + 1} ${escapeHtml(seg.keyword || '')}`;
-    chip.title     = `Source: ${seg.source || '?'} | ${seg.time || ''}`;
+    chip.title     = `Source: ${seg.source || '?'} | ${seg.time || ''} — Click to preview`;
+
+    // Make chips clickable — open preview modal
+    chip.onclick = () => {
+        if (seg.ok) showVideoPreviewModal(seg);
+    };
 }
 
 function escapeHtml(s) {
@@ -1082,6 +1196,436 @@ function escapeHtml(s) {
 }
 
 // ── Reveal video player ───────────────────────────────────────
+
+// ── Video Preview Modal (with audio synchronization) ─────────
+
+function showVideoPreviewModal(seg) {
+    const modal  = document.getElementById('video-preview-modal');
+    const player = document.getElementById('vpreview-player');
+    const audio  = document.getElementById('vpreview-audio');
+    const title  = document.getElementById('vpreview-title');
+    const meta   = document.getElementById('vpreview-meta');
+    if (!modal || !player || !audio) return;
+
+    _previewSegIndex = seg.index;
+
+    title.textContent = `Segment #${seg.index + 1} — ${seg.keyword || 'clip'}`;
+    meta.textContent  = `Source: ${seg.source || '?'} · Type: ${seg.type || '?'}${seg.time ? ' · ' + seg.time : ''}`;
+    
+    // Load Video
+    player.src = `/api/video/segments/${seg.index}?t=${Date.now()}`;
+    player.load();
+    player.muted = true; // Mute video so only synced narration audio plays
+
+    // Load Audio chunk
+    const padIndex = String(seg.index).padStart(4, '0');
+    audio.src = `/api/audio/chunk/chunk_${padIndex}.wav?t=${Date.now()}`;
+    audio.load();
+
+    // Populate Change section
+    const kwInput = document.getElementById('vpreview-change-kw');
+    if (kwInput) kwInput.value = seg.keyword || '';
+    const statusLabel = document.getElementById('vpreview-change-status');
+    if (statusLabel) { statusLabel.style.display = 'none'; statusLabel.textContent = ''; }
+
+    // Reset controls UI
+    const playBtn = document.getElementById('vpreview-play-btn');
+    if (playBtn) playBtn.textContent = '▶';
+    const seekInput = document.getElementById('vpreview-seek');
+    if (seekInput) seekInput.value = 0;
+    const curTime = document.getElementById('vpreview-time-cur');
+    if (curTime) curTime.textContent = '0:00';
+    const durTime = document.getElementById('vpreview-time-dur');
+    if (durTime) durTime.textContent = '0:00';
+
+    modal.classList.remove('hidden');
+}
+
+function setupVideoPreviewModal() {
+    const closeBtn = document.getElementById('video-preview-close');
+    const modal    = document.getElementById('video-preview-modal');
+    const player   = document.getElementById('vpreview-player');
+    const audio    = document.getElementById('vpreview-audio');
+    const playBtn  = document.getElementById('vpreview-play-btn');
+    const seek     = document.getElementById('vpreview-seek');
+    const curTime  = document.getElementById('vpreview-time-cur');
+    const durTime  = document.getElementById('vpreview-time-dur');
+    const vol      = document.getElementById('vpreview-vol');
+
+    if (!modal || !player || !audio) return;
+
+    function pauseAll() {
+        player.pause();
+        audio.pause();
+        if (playBtn) playBtn.textContent = '▶';
+    }
+
+    function cleanup() {
+        pauseAll();
+        player.src = '';
+        audio.src = '';
+    }
+
+    if (closeBtn) {
+        closeBtn.addEventListener('click', () => {
+            modal.classList.add('hidden');
+            cleanup();
+        });
+    }
+
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+            modal.classList.add('hidden');
+            cleanup();
+        }
+    });
+
+    if (playBtn) {
+        playBtn.addEventListener('click', () => {
+            if (player.paused) {
+                // Synchronize audio and video start times
+                audio.currentTime = player.currentTime;
+                player.play();
+                audio.play().catch(() => {});
+                playBtn.textContent = '⏸';
+            } else {
+                pauseAll();
+            }
+        });
+    }
+
+    // Update seek bar and timer
+    player.addEventListener('timeupdate', () => {
+        if (player.duration) {
+            const pct = (player.currentTime / player.duration) * 100;
+            if (seek) seek.value = pct;
+            if (curTime) curTime.textContent = formatTimelineLabel(player.currentTime);
+            
+            // Sync logic: Keep audio aligned with video
+            if (!audio.paused) {
+                const diff = Math.abs(player.currentTime - audio.currentTime);
+                if (diff > 0.15) {
+                    audio.currentTime = player.currentTime;
+                }
+            }
+        }
+    });
+
+    player.addEventListener('loadedmetadata', () => {
+        if (durTime && player.duration) {
+            durTime.textContent = formatTimelineLabel(player.duration);
+        }
+    });
+
+    // If audio is playing but video ended (or vice versa)
+    player.addEventListener('ended', () => {
+        pauseAll();
+        if (seek) seek.value = 100;
+    });
+
+    if (seek) {
+        seek.addEventListener('input', () => {
+            if (player.duration) {
+                const targetTime = (seek.value / 100) * player.duration;
+                player.currentTime = targetTime;
+                audio.currentTime = targetTime;
+            }
+        });
+    }
+
+    if (vol) {
+        vol.addEventListener('input', () => {
+            audio.volume = vol.value;
+        });
+    }
+
+    // ── Change Clip actions inside Preview Modal ──
+    const researchBtn = document.getElementById('btn-vpreview-research');
+    const kwInput = document.getElementById('vpreview-change-kw');
+    const uploadInput = document.getElementById('vpreview-change-upload');
+    const statusLabel = document.getElementById('vpreview-change-status');
+
+    async function handleModalResearch() {
+        if (_previewSegIndex === -1) return;
+        const keyword = kwInput ? kwInput.value.trim() : '';
+        if (!keyword) { showToast('Enter a search keyword first', 'err'); return; }
+
+        pauseAll();
+        if (researchBtn) researchBtn.disabled = true;
+        if (statusLabel) { statusLabel.textContent = '🔄 Rebuilding segment...'; statusLabel.style.display = 'inline'; }
+
+        try {
+            const res = await fetch(`/api/video/segments/${_previewSegIndex}/replace`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ keyword })
+            });
+            const data = await res.json();
+            if (data.ok) {
+                showToast(`Segment ${_previewSegIndex + 1} rebuilt ✓`, 'ok');
+                
+                // Reload preview video player
+                player.src = `/api/video/segments/${_previewSegIndex}?t=${Date.now()}`;
+                player.load();
+
+                // Sync the corresponding card in the review grid if loaded
+                const card = document.getElementById(`rcc-${_previewSegIndex}`);
+                if (card) {
+                    card.classList.remove('replacing');
+                    card.classList.add('replaced');
+                    const thumbVid = card.querySelector('.rcc-thumb video');
+                    if (thumbVid) {
+                        thumbVid.src = `/api/video/segments/${_previewSegIndex}?t=${Date.now()}`;
+                        thumbVid.load();
+                    }
+                    const kwEl = card.querySelector('.rcc-keyword');
+                    if (kwEl) kwEl.textContent = keyword;
+                    const srcEl = card.querySelector('.rcc-source');
+                    if (srcEl) srcEl.textContent = data.source || '';
+                }
+            } else {
+                showToast('Rebuild failed: ' + (data.error || 'unknown'), 'err');
+            }
+        } catch (e) {
+            showToast('Network error during rebuild', 'err');
+        } finally {
+            if (researchBtn) researchBtn.disabled = false;
+            if (statusLabel) { statusLabel.style.display = 'none'; statusLabel.textContent = ''; }
+        }
+    }
+
+    async function handleModalUpload() {
+        if (_previewSegIndex === -1) return;
+        const file = uploadInput.files && uploadInput.files[0];
+        if (!file) return;
+
+        pauseAll();
+        if (statusLabel) { statusLabel.textContent = '📤 Uploading clip...'; statusLabel.style.display = 'inline'; }
+
+        try {
+            const fd = new FormData();
+            fd.append('file', file);
+            const res = await fetch(`/api/video/segments/${_previewSegIndex}/upload`, {
+                method: 'POST',
+                body: fd
+            });
+            const data = await res.json();
+            if (data.ok) {
+                showToast(`Segment ${_previewSegIndex + 1} replaced with uploaded file ✓`, 'ok');
+                
+                // Reload preview video player
+                player.src = `/api/video/segments/${_previewSegIndex}?t=${Date.now()}`;
+                player.load();
+
+                // Sync the corresponding card in the review grid if loaded
+                const card = document.getElementById(`rcc-${_previewSegIndex}`);
+                if (card) {
+                    card.classList.remove('replacing');
+                    card.classList.add('replaced');
+                    const thumbVid = card.querySelector('.rcc-thumb video');
+                    if (thumbVid) {
+                        thumbVid.src = `/api/video/segments/${_previewSegIndex}?t=${Date.now()}`;
+                        thumbVid.load();
+                    }
+                    const kwEl = card.querySelector('.rcc-keyword');
+                    if (kwEl) kwEl.textContent = 'custom upload';
+                    const srcEl = card.querySelector('.rcc-source');
+                    if (srcEl) srcEl.textContent = 'upload';
+                }
+            } else {
+                showToast('Upload failed: ' + (data.error || 'unknown'), 'err');
+            }
+        } catch (e) {
+            showToast('Network error during upload', 'err');
+        } finally {
+            if (statusLabel) { statusLabel.style.display = 'none'; statusLabel.textContent = ''; }
+            uploadInput.value = '';
+        }
+    }
+
+    if (researchBtn) researchBtn.addEventListener('click', handleModalResearch);
+    if (uploadInput) uploadInput.addEventListener('change', handleModalUpload);
+}
+
+// ── Review Panel ──────────────────────────────────────────────
+
+function buildReviewPanel(segments) {
+    const grid = document.getElementById('review-clips-grid');
+    if (!grid) return;
+    // Only rebuild if not already populated (avoid flickering on re-broadcasts)
+    if (grid.children.length === segments.length) return;
+    grid.innerHTML = '';
+    segments.forEach(seg => grid.appendChild(renderReviewCard(seg)));
+
+    // Wire up Merge Now button
+    const mergeBtn = document.getElementById('btn-merge-now');
+    if (mergeBtn) {
+        mergeBtn.onclick = () => triggerMerge(mergeBtn);
+    }
+}
+
+function renderReviewCard(seg) {
+    const card = document.createElement('div');
+    card.className = 'review-clip-card';
+    card.id = `rcc-${seg.index}`;
+
+    const typeLabel = seg.type || 'clip';
+    const srcLabel  = seg.source || '?';
+    const kwLabel   = seg.keyword || '';
+    const formId    = `rcc-form-${seg.index}`;
+    const uploadId  = `rcc-upload-${seg.index}`;
+
+    card.innerHTML = `
+        <div class="rcc-spinner" id="rcc-spin-${seg.index}">🔄 Searching…</div>
+        <div class="rcc-thumb" id="rcc-thumb-${seg.index}">
+            <video muted preload="metadata" src="/api/video/segments/${seg.index}?t=${Date.now()}"
+                   style="width:100%;height:100%;object-fit:cover;"></video>
+            <div class="rcc-thumb-overlay">▶</div>
+        </div>
+        <div class="rcc-info">
+            <div class="rcc-idx">Segment ${seg.index + 1}</div>
+            <div class="rcc-keyword" title="${escapeHtml(kwLabel)}">${escapeHtml(kwLabel)}</div>
+            <div class="rcc-source">${escapeHtml(srcLabel)}</div>
+            <span class="rcc-type-badge ${typeLabel}">${typeLabel}</span>
+        </div>
+        <div class="rcc-actions">
+            <div class="rcc-btn-row" style="margin-bottom: 6px;">
+                <button class="btn-rcc btn-preview-rcc primary" style="border-color: #7c9dff; color: #7c9dff; background: rgba(124,157,255,0.06);">👁 Preview</button>
+                <button class="btn-rcc" onclick="toggleReplaceForm(${seg.index})">🔄 Change</button>
+            </div>
+            <div class="rcc-replace-form" id="${formId}">
+                <input class="rcc-kw-input" id="rcc-kw-${seg.index}" placeholder="New keyword…" value="${escapeHtml(kwLabel)}">
+                <div class="rcc-btn-row">
+                    <button class="btn-rcc primary" onclick="replaceClip(${seg.index})">🔍 Re-search</button>
+                    <button class="btn-rcc danger" onclick="toggleReplaceForm(${seg.index})">Cancel</button>
+                </div>
+                <label class="rcc-upload-label" for="${uploadId}">📁 Upload Own Clip</label>
+                <input class="rcc-upload-input" id="${uploadId}" type="file" accept="video/*"
+                       onchange="uploadClip(${seg.index}, this)">
+            </div>
+        </div>
+    `;
+
+    // Click on thumb or preview button opens full preview modal
+    const thumb = card.querySelector('.rcc-thumb');
+    thumb.addEventListener('click', () => showVideoPreviewModal(seg));
+    card.querySelector('.btn-preview-rcc').addEventListener('click', () => showVideoPreviewModal(seg));
+
+    return card;
+}
+
+function toggleReplaceForm(index) {
+    const form = document.getElementById(`rcc-form-${index}`);
+    if (form) form.classList.toggle('open');
+}
+
+async function replaceClip(index) {
+    const kwInput = document.getElementById(`rcc-kw-${index}`);
+    const keyword = kwInput ? kwInput.value.trim() : '';
+    if (!keyword) { showToast('Enter a keyword first', 'err'); return; }
+
+    const card    = document.getElementById(`rcc-${index}`);
+    const spinner = document.getElementById(`rcc-spin-${index}`);
+    if (spinner) spinner.classList.add('active');
+    if (card)   card.classList.add('replacing');
+
+    try {
+        const res  = await fetch(`/api/video/segments/${index}/replace`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ keyword }),
+        });
+        const data = await res.json();
+        if (data.ok) {
+            showToast(`Segment ${index + 1} replaced ✓`, 'ok');
+            if (card) card.classList.remove('replacing');
+            if (card) card.classList.add('replaced');
+            // Reload thumb video
+            const thumbVid = document.querySelector(`#rcc-thumb-${index} video`);
+            if (thumbVid) {
+                thumbVid.src = `/api/video/segments/${index}?t=${Date.now()}`;
+                thumbVid.load();
+            }
+            // Update keyword label
+            const kwEl = card ? card.querySelector('.rcc-keyword') : null;
+            if (kwEl) kwEl.textContent = keyword;
+            const srcEl = card ? card.querySelector('.rcc-source') : null;
+            if (srcEl) srcEl.textContent = data.source || '';
+            // Close form
+            toggleReplaceForm(index);
+        } else {
+            showToast('Replace failed: ' + (data.error || 'unknown'), 'err');
+            if (card) card.classList.remove('replacing');
+        }
+    } catch (e) {
+        showToast('Network error during replace', 'err');
+        if (card) card.classList.remove('replacing');
+    } finally {
+        if (spinner) spinner.classList.remove('active');
+    }
+}
+
+async function uploadClip(index, inputEl) {
+    const file = inputEl.files && inputEl.files[0];
+    if (!file) return;
+
+    const card    = document.getElementById(`rcc-${index}`);
+    const spinner = document.getElementById(`rcc-spin-${index}`);
+    if (spinner) { spinner.textContent = '📤 Uploading…'; spinner.classList.add('active'); }
+    if (card)   card.classList.add('replacing');
+
+    try {
+        const fd = new FormData();
+        fd.append('file', file);
+        const res  = await fetch(`/api/video/segments/${index}/upload`, {
+            method: 'POST',
+            body: fd,
+        });
+        const data = await res.json();
+        if (data.ok) {
+            showToast(`Segment ${index + 1} replaced with uploaded file ✓`, 'ok');
+            if (card) card.classList.remove('replacing');
+            if (card) card.classList.add('replaced');
+            // Reload thumb
+            const thumbVid = document.querySelector(`#rcc-thumb-${index} video`);
+            if (thumbVid) { thumbVid.src = `/api/video/segments/${index}?t=${Date.now()}`; thumbVid.load(); }
+            const kwEl = card ? card.querySelector('.rcc-keyword') : null;
+            if (kwEl) kwEl.textContent = 'custom upload';
+            const srcEl = card ? card.querySelector('.rcc-source') : null;
+            if (srcEl) srcEl.textContent = 'upload';
+        } else {
+            showToast('Upload failed: ' + (data.error || 'unknown'), 'err');
+            if (card) card.classList.remove('replacing');
+        }
+    } catch (e) {
+        showToast('Network error during upload', 'err');
+        if (card) card.classList.remove('replacing');
+    } finally {
+        if (spinner) { spinner.classList.remove('active'); spinner.textContent = '🔄 Searching…'; }
+        inputEl.value = '';
+    }
+}
+
+async function triggerMerge(btn) {
+    if (btn) { btn.disabled = true; btn.textContent = '⚙ Merging…'; }
+    try {
+        const res  = await fetch('/api/video/merge', { method: 'POST' });
+        const data = await res.json();
+        if (!data.ok) {
+            showToast('Merge failed: ' + (data.error || 'unknown'), 'err');
+            if (btn) { btn.disabled = false; btn.textContent = '⚡ Merge Now'; }
+        } else {
+            showToast('Merging… final video coming soon!', 'ok');
+            const drawer = document.getElementById('review-drawer');
+            const backdrop = document.getElementById('review-backdrop');
+            if (drawer) drawer.classList.add('hidden');
+            if (backdrop) backdrop.classList.add('hidden');
+        }
+    } catch (e) {
+        showToast('Network error triggering merge', 'err');
+        if (btn) { btn.disabled = false; btn.textContent = '⚡ Merge Now'; }
+    }
+}
 
 function revealVideoPlayer() {
     const player = document.getElementById('video-output-player');
@@ -1557,6 +2101,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initVoicePickerModal();
     initVoiceSuggestModal();
     initHistoryDrawer();
+    initStatsDrawer();
 });
 
 
@@ -1830,4 +2375,145 @@ function initHistoryDrawer() {
 
     // Auto-refresh history badge on page load
     loadHistory();
+}
+
+// ── B-Roll Review Drawer (70% Wide) ──────────────────────────
+
+function setupReviewDrawer() {
+    const openBtn  = document.getElementById('btn-open-review-drawer');
+    const closeBtn = document.getElementById('review-drawer-close');
+    const drawer   = document.getElementById('review-drawer');
+    const backdrop = document.getElementById('review-backdrop');
+
+    if (!drawer || !backdrop) return;
+
+    function openDrawer() {
+        drawer.classList.remove('hidden');
+        backdrop.classList.remove('hidden');
+    }
+
+    function closeDrawer() {
+        drawer.classList.add('hidden');
+        backdrop.classList.add('hidden');
+    }
+
+    if (openBtn) openBtn.addEventListener('click', openDrawer);
+    if (closeBtn) closeBtn.addEventListener('click', closeDrawer);
+    backdrop.addEventListener('click', closeDrawer);
+
+    // Keyboard ESC to close
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && !drawer.classList.contains('hidden')) {
+            closeDrawer();
+        }
+    });
+}
+
+
+// ── Statistics Drawer (📊 Stats) ─────────────────────────────
+
+function initStatsDrawer() {
+    const openBtn  = document.getElementById('btn-open-stats');
+    const drawer   = document.getElementById('stats-drawer');
+    const backdrop = document.getElementById('stats-backdrop');
+    const closeBtn = document.getElementById('stats-drawer-close');
+
+    if (!openBtn || !drawer) return;
+
+    function openDrawer() {
+        drawer.classList.remove('hidden');
+        backdrop.classList.remove('hidden');
+        loadStats();
+    }
+
+    function closeDrawer() {
+        drawer.classList.add('hidden');
+        backdrop.classList.add('hidden');
+    }
+
+    openBtn.addEventListener('click', openDrawer);
+    if (closeBtn) closeBtn.addEventListener('click', closeDrawer);
+    backdrop.addEventListener('click', closeDrawer);
+
+    // Keyboard ESC to close
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && !drawer.classList.contains('hidden')) {
+            closeDrawer();
+        }
+    });
+}
+
+async function loadStats() {
+    try {
+        const r = await fetch('/api/video/stats');
+        if (!r.ok) throw new Error('Failed to fetch stats');
+        const data = await r.json();
+
+        // 1. Populate Groq summary
+        document.getElementById('stat-groq-total').textContent = data.groq.total_requests || 0;
+        document.getElementById('stat-groq-success').textContent = data.groq.successful_requests || 0;
+        document.getElementById('stat-groq-limits').textContent = data.groq.rate_limits_hit || 0;
+
+        // 2. Populate Groq keys status list
+        const keysList = document.getElementById('stats-keys-list');
+        keysList.innerHTML = '';
+        
+        const keysMap = data.groq.keys || {};
+        const keyIds = Object.keys(keysMap);
+        if (keyIds.length === 0) {
+            keysList.innerHTML = `<div style="font-size: 0.8rem; color: rgba(255,255,255,0.4); text-align: center; padding: 8px;">No keys used yet. Run a generation!</div>`;
+        } else {
+            keyIds.forEach((kid, idx) => {
+                const kinfo = keysMap[kid];
+                const statusColor = kinfo.status.includes('rate_limited') ? '#f5222d' : '#52c41a';
+                const keyRow = document.createElement('div');
+                keyRow.style = "display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.15); padding: 8px 12px; border-radius: 6px; font-size: 0.8rem;";
+                
+                // Format last used date
+                let lastUsedStr = 'Never';
+                if (kinfo.last_used) {
+                    try {
+                        const date = new Date(kinfo.last_used);
+                        lastUsedStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                    } catch(e) {}
+                }
+
+                keyRow.innerHTML = `
+                    <div>
+                        <div style="font-weight: 600; color: #fff;">Key #${idx + 1}: <span style="font-family: monospace; color: rgba(255,255,255,0.7);">${kinfo.prefix}</span></div>
+                        <div style="font-size: 0.7rem; color: rgba(255,255,255,0.4); margin-top: 2px;">Last call: ${lastUsedStr}</div>
+                    </div>
+                    <div style="text-align: right;">
+                        <span style="display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 0.65rem; font-weight: 700; background: rgba(${statusColor === '#52c41a' ? '82,196,26' : '245,34,45'}, 0.15); color: ${statusColor};">${kinfo.status.toUpperCase()}</span>
+                        <div style="font-size: 0.7rem; color: rgba(255,255,255,0.5); margin-top: 2px;">Calls: ${kinfo.requests}</div>
+                    </div>
+                `;
+                keysList.appendChild(keyRow);
+            });
+        }
+
+        // 3. Populate general resources
+        document.getElementById('stat-word-count').textContent = data.script.word_count || 0;
+        document.getElementById('stat-segments-count').textContent = data.script.segments_count || 0;
+        document.getElementById('stat-segments-size').textContent = `${data.script.segments_size_mb || 0} MB`;
+        document.getElementById('stat-cache-size').textContent = `${data.script.cache_size_mb || 0} MB`;
+
+        // 4. Populate stock status
+        const stockEl = document.getElementById('stat-stock-status');
+        const activeApis = [];
+        if (data.apis.pexels_loaded) activeApis.push('Pexels');
+        if (data.apis.pixabay_loaded) activeApis.push('Pixabay');
+        if (data.apis.coverr_loaded) activeApis.push('Coverr');
+        
+        if (activeApis.length > 0) {
+            stockEl.textContent = activeApis.join(' / ');
+            stockEl.style.color = '#52c41a';
+        } else {
+            stockEl.textContent = 'None Loaded';
+            stockEl.style.color = '#f5222d';
+        }
+
+    } catch (err) {
+        console.error('Stats load error:', err);
+    }
 }
