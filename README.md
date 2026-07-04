@@ -4,43 +4,48 @@ Local, production-grade AI voice narration and automated cinematic B-Roll video 
 
 ---
 
-## Key Features
+## 🚀 Key Features
 
-- **AI Voice Advisor (Voice Suggestion)**: Paste a short summary description of your narrative character, emotional arc, and pacing. The local intelligent advisor immediately suggests the optimal voice profile, emotion preset, speed, and custom tone prompt, applying them instantly to your session.
-- **Voice Browser (Rich Picker Modal)**: Visual search and category filters (US/UK, Male/Female) across all 28 studio voice profiles. Play instant sample audio previews and apply narrator profiles with a single click.
-- **Local Generation History**: Complete history tracking of every generation with customizable titles (inline editable), tags for voice/speed/duration/video-inclusion, individual deletion controls, mini audio players, and fast downloads for WAV and MP4 formats.
-- **Visual B-Roll Integration**: Automatically parses script keywords (via local heuristics or free Gemini Flash keys) to query, download, stitch, and pad orientation-aware B-Roll scenes.
-- **Acoustic Engineering**: EBU R128 loudness normalization, custom silence gap padding, and automatic WAV/MP3 conversion.
+* **AI Voice Advisor (Voice Suggestion)**: Paste a short summary description of your narrative character, emotional arc, and pacing. The local intelligent advisor immediately suggests the optimal voice profile, emotion preset, speed, and custom tone prompt, applying them instantly to your session.
+* **Voice Browser (Rich Picker Modal)**: Visual search and category filters (US/UK, Male/Female) across all 28 studio voice profiles. Play instant sample audio previews and apply narrator profiles with a single click.
+* **Pro 3-Column Layout**: A modern, percentage-based grid layout:
+  * **20% Width Left Panel**: Studio settings (Pipeline Mode, Narrators, Emotion tags, Pacing, Aspect Ratios, Clip Intervals).
+  * **50% Width Middle Workspace**: High-performance script text editor with live gutter numbers, word counters, and quick speaker tag insertion shelf.
+  * **30% Width Output Console**: Controls for starting/cancelling generation, detailed progress timelines, interactive Segment Previewer, and the master audio playback suite.
+* **Interactive Statistics Drawer (`📊 Stats`)**: A sliding console displaying real-time statistics:
+  * **Groq API Counters**: Total requests made, successful completions, and rate limits (429) hit.
+  * **Rotating Keys Status**: Tracking pool prefixes, current status (Active vs. Rate-limited), call counts, and relative time since the last call for all 7 keys.
+  * **Disk Resources Table**: Current script word count, output segments count, video segments size, and local B-roll raw video cache size.
+  * **Stock Integration**: Connected APIs status (Pexels, Pixabay, Coverr).
+* **Audio-Synced Segment Previews**: Clicking on a generated clip plays both the B-roll footage and the matching voiceover WAV chunk (`chunk_XXXX.wav`) simultaneously. Features an auto-alignment sync listener (150ms tolerance) that adjusts playback speeds to keep narration and visuals locked in.
+* **Automatic Multi-Key Groq Rotation**: Completely removed Gemini and RAKE. The pipeline extracts visual search queries using **only Groq** (Llama-3.3-70B). Up to 7 keys can be pasted comma-separated inside the env variables or the settings drawer; if any key hits a 429 rate limit, it rotates instantly to the next active key.
+
+---
+
+## 🛠️ Production-Grade Robustness Upgrades
+
+* **HTTP Retry Session Adapter**: Integrated requests-based exponential backoff retry sessions for media downloads, preventing transient network drops (500/502/503/504) or stock API rate limits (429) from halting the pipeline.
+* **FFmpeg Transcode Concat Fallback**: If the fast, lossless `concat` demuxer fails (due to custom clip uploads or codec mismatch), the system automatically executes a fallback transcoding `-filter_complex` merge to guarantee a compiled output video.
+* **Disk Space Cache Purging**: The background video worker automatically deletes the temporary downloads directory (`outputs/video/segments/raw`) after a successful compilation, saving gigabytes of local storage.
+* **Generative Cache Flushing**: Starting a new generation clears out the previous `.wav` chunks inside `outputs/chunks/` and deletes the old `outputs/final_episode.wav`/`final_video.mp4` to prevent leaks or overlapping audios.
+* **Playback Cache-Busting**: The frontend player appends a dynamic timestamp query parameter (`?t=Date.now()`) to the master audio URL on play, forcing the browser to fetch the freshly stitched narration instead of playing cached memory blocks.
+* **Subprocess Deadlock Prevention**: Set subprocess execution parameters to inherit parent streams (`stderr=None`) instead of piping stdout/stderr into unconsumed buffers, eliminating python pipe deadlock freezes.
 
 ---
 
 ## System Workflow
 
-This project features a fully automated workflow that handles script writing, voice generation, visual B-roll selection, and final video editing:
-
 ```
-[ Your Script ] ➔ 🎙 Kokoro-82M ONNX ➔ [ Audio Chunks ] ➔ 🎛 Silence & Stitch ➔ [ final_audio.wav ]
-                                                                                    │
-[ final_video.mp4 ] 🏓 Multi-Clip Merge 🎓 Keyword Search (Gemini/Pexels) ➔ [ Auto-Archive / History ]
+[ Script Editor ] ➔ 🎙 Kokoro-82M ONNX ➔ [ WAV Chunks ] ➔ 🎛 Silence & Stitch ➔ [ final_episode.wav ]
+                                                                                   │
+[ final_video.mp4 ] 🏓 Concat / Filter Fallback ⚡ Rotating Groq Keywords ➔ [ Auto-Archive / History ]
 ```
 
-1. **Kokoro-82M ONNX Engine**: Replaced the heavy, slow MLX Qwen3-TTS engine with a lightweight, high-performance ONNX implementation of Kokoro-82M. It loads instantly, runs seamlessly on CPU or GPU, and produces hyper-realistic, human-like voice synthesis.
-2. **28 English Voice Profiles**: Expanded the active voice database to include 28 premium English voices grouped by region (US/UK) and narrative tone (soft, expressive, rich, conversational).
-3. **Pipeline Mode Selector**: A dynamic controller that allows you to target your output format:
-   - 🎙 **Audio Only**: Generates narration speech audio files. Hides video controls to keep the studio clean.
-   - ✨ **Both**: Generates high-quality audio, then immediately starts search & download of context-aware B-Roll clips, rendering a finished video automatically.
-   - 🎬 **Video Only**: Skips the audio synthesis step and builds B-Roll matching your existing output audio.
-4. **Scrollable Output Console**: Restructured the layout to keep control panel triggers fixed on screen, hosting all segment results, playback controls, and rendering players in a space-maximized, scrollable history container.
-
----
-
-## Features
-
-- **Web Dashboard** — browser workspace with a custom line-numbered script editor, live progress streams, and embedded media players.
-- **28 High-Fidelity Studio Voices** — US and UK accents, male and female voices, ranging from deep cinematic to warm conversational.
-- **Dynamic Mode Switching** — toggle between Audio Only, Video Only, or Both.
-- **Visual B-Roll Integration** — automatically parses your script keywords (offline or via free Gemini Flash) to pull, stitch, and pad orientation-aware footage.
-- **Acoustic Engineering** — EBU R128 loudness normalization, custom silence gap padding, and automatic WAV/MP3 conversion.
+1. **Kokoro-82M ONNX Engine**: High-performance ONNX implementation of Kokoro-82M. It loads instantly, runs CPU/GPU, and produces hyper-realistic voice synthesis.
+2. **Pipeline Mode Selector**:
+   - 🎙 **Audio Only**: Generates narration speech audio files.
+   - ✨ **Both**: Generates high-quality audio, then immediately searches, downloads, and stitches B-Roll clips to render a finished video.
+   - 🎬 **Video Only**: Skips the audio synthesis step and builds B-Roll matching your existing audio track.
 
 ---
 
@@ -48,13 +53,13 @@ This project features a fully automated workflow that handles script writing, vo
 
 | Dependency | Version | Notes |
 |------------|---------|-------|
-| macOS / Win / Linux | Any | Works on standard CPUs/GPUs via ONNX |
-| Python | 3.10+ | |
+| macOS / Win / Linux | Any | Runs locally on CPU/GPU via ONNX |
+| Python | 3.10+ | Tested on Python 3.11 |
 | kokoro-onnx | 0.5.0+ | `pip install kokoro-onnx` |
-| onnxruntime | 1.16+ | Runs the Kokoro model |
 | soundfile | 0.12+ | Handles high-fidelity audio writing |
 | FastAPI | 0.110+ | Web dashboard backend |
-| ffmpeg | 7.0+ | Required for audio stitching and video merging |
+| requests | 2.31+ | Handles API calls and retry sessions |
+| ffmpeg | 7.0+ | stitch WAVs and merge B-roll clips |
 
 ---
 
@@ -67,7 +72,7 @@ git clone <your-repo-url> narrator
 cd narrator
 ```
 
-### 2. Set up Virtual Environment
+### 2. Set up Virtual Environment & Dotenv
 
 Create a virtual environment and install dependencies:
 
@@ -77,13 +82,28 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+Create a `.env` file in the root directory:
+
+```env
+PEXELS_API_KEY=your_pexels_key
+PIXABAY_API_KEY=your_pixabay_key
+COVERR_API_KEY=your_coverr_key
+GROQ_API_KEYS=key_1,key_2,key_3,key_4,key_5,key_6,key_7
+```
+
 *(Ensure `ffmpeg` is installed on your system. For macOS: `brew install ffmpeg`)*
 
 ### 3. Model Weights Auto-Download
 
-You do not need to download the models manually! The application checks for weights on startup. The first time you generate audio, it will automatically pull the files from GitHub Releases and place them in the correct directories:
+The application checks for weights on startup. The first time you generate audio, it will automatically pull the files from GitHub Releases and place them in:
 - `models/kokoro/kokoro-v1.0.onnx` (~300MB)
 - `models/kokoro/voices-v1.0.bin` (~27MB)
+
+Run the server:
+```bash
+python3 server.py
+```
+Open [http://localhost:8000](http://localhost:8000) in your browser.
 
 ---
 
@@ -103,7 +123,7 @@ Kokoro is highly sensitive to text structure. You can design custom emotional pa
 
 ### 2. Script Example with Emotional Tags & Presets
 
-You can format your script in the workspace to target specific voices per line. 
+You can format your script in the workspace to target specific voices per line:
 
 ```text
 The day Paul Reston shook my hand and called me the most talented analyst he'd ever worked with, I believed him. 
@@ -162,12 +182,13 @@ You can choose from 28 studio-grade voices directly in the Web UI:
 ```
 narrator/
 ├── config.py              # Configuration (Voices, paths, video APIs)
+├── server.py              # FastAPI server orchestrator
+├── architecture.md        # Mermaid workflows and subprocess diagrams
 ├── core/
 │   ├── model.py           # Kokoro-ONNX loader & auto-downloader
 │   ├── audio.py           # Synthesis, normalization, stitching, MP3
 │   ├── script.py          # Script tag parsers
 │   └── video.py           # B-Roll video extraction & stitching engine
-├── server.py              # FastAPI server orchestrator
 ├── web/
 │   ├── index.html         # Workspace dashboard interface
 │   ├── style.css          # Glassmorphic dark styling
@@ -175,17 +196,3 @@ narrator/
 ├── voice_tests/           # Folder containing generated voice previews (gitignored)
 └── requirements.txt       # Project python dependencies
 ```
-
----
-
-## Troubleshooting
-
-### Generation stalls on "Loading Kokoro ONNX Engine"
-- The first generation downloads ~327MB of weights from GitHub releases. Ensure you have an active internet connection.
-- Check the terminal logs to monitor the download percentages.
-
-### "Audio overlaps or cuts off"
-- Keep chunks bounded by scene breaks. Extremely long run-on lines can lead to pacing issues. Break your script into distinct lines in the editor.
-
-### "Stitch failed"
-- Ensure `ffmpeg` is in your system path: run `ffmpeg -version` in terminal.
