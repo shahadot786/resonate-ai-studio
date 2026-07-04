@@ -80,13 +80,21 @@ VOICES = [
 ]
 
 # ── B-Roll Video Pipeline ────────────────────────────────────
-PEXELS_API_KEY      = "pOccPxW2ezZ5IwOsBYo7VDRiRj2zXUjk9TCOXHeGIZyxFekaMSUuxL5s"
-PIXABAY_API_KEY     = "56526229-bf7604a89c5531497f60e7f3c"
-COVERR_API_KEY      = ""   # optional – get free at coverr.co/api
-GEMINI_API_KEY      = "AQ.Ab8RN6L_hnsAPvlwPUd8Q6YUoYYMNnIVyaC6fJ4i5mmEgy3rLg"
-YOUTUBE_API_KEY     = ""   # YouTube Data API v3 key — get free at console.cloud.google.com
-                            # Free quota: 10,000 units/day (~100 searches)
-                            # Enable: YouTube Data API v3 in Google Cloud Console
+import os as _os
+
+# Load .env file if present (requires python-dotenv, falls back silently)
+try:
+    from dotenv import load_dotenv as _load_dotenv
+    _load_dotenv(_os.path.join(_os.path.dirname(__file__), ".env"))
+except ImportError:
+    pass  # python-dotenv not installed — keys must be set as real env vars
+
+PEXELS_API_KEY   = _os.getenv("PEXELS_API_KEY",  "")
+PIXABAY_API_KEY  = _os.getenv("PIXABAY_API_KEY", "")
+COVERR_API_KEY   = _os.getenv("COVERR_API_KEY",  "")
+GEMINI_API_KEY   = _os.getenv("GEMINI_API_KEY",  "")
+YOUTUBE_API_KEY  = _os.getenv("YOUTUBE_API_KEY", "")
+
 
 # Video output settings
 VIDEO_RESOLUTION    = "1920x1080"

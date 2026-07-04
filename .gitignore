@@ -28,3 +28,6 @@ temp_*/
 # Scratch / temporary scripts
 scratch/
 
+# Environment / secrets — NEVER commit .env
+.env
+# .env.example is safe to commit (contains no real values)
