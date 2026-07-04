@@ -518,7 +518,7 @@ async def _run_worker(mode: str, text: str = ""):
         _worker_process = await asyncio.create_subprocess_exec(
             python, "core/worker.py", config_path,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            stderr=None,  # inherit parent stream to prevent pipe deadlock
             cwd=os.getcwd(),
         )
 
@@ -580,8 +580,10 @@ async def _run_worker(mode: str, text: str = ""):
 
         # If process exited with error and we haven't already set error state
         if _worker_process.returncode != 0 and _gen_state["status"] not in ("done", "error", "cancelled"):
-            stderr = await _worker_process.stderr.read()
-            err_msg = stderr.decode("utf-8", errors="replace").strip()[-200:]
+            err_msg = ""
+            if _worker_process.stderr:
+                stderr = await _worker_process.stderr.read()
+                err_msg = stderr.decode("utf-8", errors="replace").strip()[-200:]
             _update_state(
                 running=False,
                 status="error",
