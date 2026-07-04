@@ -40,6 +40,7 @@ def main():
     pixabay_key         = cfg.get("pixabay_api_key", "")
     coverr_key          = cfg.get("coverr_api_key", "")
     gemini_key          = cfg.get("gemini_api_key", "")
+    youtube_key         = cfg.get("youtube_api_key", "")
     keyword_mode        = cfg.get("keyword_mode", "rake")
     resolution          = cfg.get("resolution", "1920x1080")
     fps                 = cfg.get("fps", 30)
@@ -127,6 +128,7 @@ def main():
             pixabay_key=pixabay_key,
             coverr_key=coverr_key,
             gemini_key=gemini_key,
+            youtube_key=youtube_key,
             keyword_mode=keyword_mode,
             resolution=resolution,
             fps=fps,

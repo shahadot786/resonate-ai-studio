@@ -84,6 +84,9 @@ PEXELS_API_KEY      = "pOccPxW2ezZ5IwOsBYo7VDRiRj2zXUjk9TCOXHeGIZyxFekaMSUuxL5s"
 PIXABAY_API_KEY     = "56526229-bf7604a89c5531497f60e7f3c"
 COVERR_API_KEY      = ""   # optional – get free at coverr.co/api
 GEMINI_API_KEY      = "AQ.Ab8RN6L_hnsAPvlwPUd8Q6YUoYYMNnIVyaC6fJ4i5mmEgy3rLg"
+YOUTUBE_API_KEY     = ""   # YouTube Data API v3 key — get free at console.cloud.google.com
+                            # Free quota: 10,000 units/day (~100 searches)
+                            # Enable: YouTube Data API v3 in Google Cloud Console
 
 # Video output settings
 VIDEO_RESOLUTION    = "1920x1080"

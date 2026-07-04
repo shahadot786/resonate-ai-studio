@@ -934,6 +934,10 @@ function setupAspectRatio() {
                 const chk = document.getElementById('check-review-before-merge');
                 if (chk) chk.checked = !!cfg.review_before_merge;
             }
+            if (cfg.youtube_api_key !== undefined) {
+                const yt = document.getElementById('inp-youtube-api-key');
+                if (yt) yt.value = cfg.youtube_api_key || '';
+            }
         })
         .catch(() => {});
 
@@ -973,6 +977,22 @@ function setupAspectRatio() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ review_before_merge: reviewChk.checked }),
             }).catch(() => {});
+        });
+    }
+
+    // YouTube CC API key — save on change
+    const ytKeyInp = document.getElementById('inp-youtube-api-key');
+    if (ytKeyInp) {
+        let ytSaveTimer = null;
+        ytKeyInp.addEventListener('input', () => {
+            clearTimeout(ytSaveTimer);
+            ytSaveTimer = setTimeout(() => {
+                fetch('/api/video/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ youtube_api_key: ytKeyInp.value.trim() }),
+                }).catch(() => {});
+            }, 800);  // debounce 800ms
         });
     }
 }

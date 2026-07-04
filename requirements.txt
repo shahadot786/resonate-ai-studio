@@ -14,3 +14,4 @@ python-multipart>=0.0.9
 
 # Video B-Roll pipeline
 requests>=2.31.0
+yt-dlp>=2024.1.0   # YouTube Creative Commons B-roll download

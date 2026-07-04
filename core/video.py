@@ -822,6 +822,7 @@ def build_segment(
     pixabay_key: str = "",
     coverr_key: str = "",
     gemini_key: str = "",
+    youtube_key: str = "",
     keyword_mode: str = "rake",
     resolution: str = "1920x1080",
     fps: int = 30,
@@ -868,6 +869,7 @@ def build_segment(
 
     # ── Helper: build provider lists ─────────────────────────
     def _make_video_providers():
+        """Stock API video providers (Pexels/Pixabay/Wikimedia). YouTube CC is handled separately."""
         providers = []
         if pexels_key:
             providers.append(("Pexels",   lambda k, _o=_orient: _search_pexels_video(k, pexels_key, _o)))
@@ -877,6 +879,7 @@ def build_segment(
             providers.append(("Coverr",   lambda k: _search_coverr_video(k, coverr_key)))
         providers.append(("Wikimedia", _search_wikimedia_video))
         return providers
+
 
     def _make_image_providers():
         providers = []
@@ -891,9 +894,21 @@ def build_segment(
     def _fetch_one_clip(kw_alternatives: list[str], raw_path: str) -> tuple[str | None, str | None, str | None]:
         """
         Try all alternative keywords across all video providers.
+        Priority order: YouTube CC → Pexels → Pixabay → Coverr → Wikimedia.
         kw_alternatives is a list ordered from best to least relevant.
         Returns (path, source_name, matched_keyword) or (None, None, None).
         """
+        # 1. Try YouTube CC first (best semantic matching, completely free)
+        if youtube_key:
+            from core.youtube_cc import search_and_download_youtube_cc
+            for kw in kw_alternatives:
+                _emit(f"  🎬 YouTubeCC — searching «{kw}»…")
+                result_path = search_and_download_youtube_cc(kw, raw_path, youtube_key, _orient)
+                if result_path and os.path.exists(result_path) and _get_duration_secs(result_path) > 0:
+                    _emit(f"  ✓ YouTubeCC found clip for «{kw}»")
+                    return result_path, "YouTubeCC", kw
+
+        # 2. Fall back to stock API providers (Pexels / Pixabay / Wikimedia)
         for kw in kw_alternatives:
             for name, searcher in _make_video_providers():
                 url = searcher(kw)
@@ -903,6 +918,7 @@ def build_segment(
                     if _get_duration_secs(raw_path) > 0:
                         return raw_path, name, kw
         return None, None, None
+
 
     # ── 3. Decide strategy: sub-clip splitting vs. single fill ──
 
