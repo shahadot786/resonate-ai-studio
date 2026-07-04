@@ -628,6 +628,21 @@ async def start_generation(request: Request):
     _gen_state["current_chunk"] = 0
     _gen_state["total_chunks"] = 0
 
+    # Clean up old chunks and outputs to prevent playing previous generations
+    if os.path.exists(config.CHUNKS_DIR):
+        for f in os.listdir(config.CHUNKS_DIR):
+            fp = os.path.join(config.CHUNKS_DIR, f)
+            if os.path.isfile(fp):
+                try:
+                    os.remove(fp)
+                except Exception:
+                    pass
+    if os.path.exists(config.OUTPUT_FILE):
+        try:
+            os.remove(config.OUTPUT_FILE)
+        except Exception:
+            pass
+
     _update_state(status="loading", message="Starting worker...")
 
     # Launch worker as async task
@@ -1115,6 +1130,21 @@ async def start_video_generation(request: Request):
     _video_state["segments_done"] = []
     _video_state["current_chunk"] = 0
     _video_state["total_chunks"] = 0
+
+    # Clean up old segments (preserving raw cache directory) and final output video
+    if os.path.exists(config.VIDEO_SEGMENTS_DIR):
+        for f in os.listdir(config.VIDEO_SEGMENTS_DIR):
+            fp = os.path.join(config.VIDEO_SEGMENTS_DIR, f)
+            if os.path.isfile(fp):
+                try:
+                    os.remove(fp)
+                except Exception:
+                    pass
+    if os.path.exists(config.VIDEO_OUTPUT_FILE):
+        try:
+            os.remove(config.VIDEO_OUTPUT_FILE)
+        except Exception:
+            pass
 
     _update_video_state(status="searching", message="Starting video worker…")
 

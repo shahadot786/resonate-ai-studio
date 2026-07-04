@@ -667,13 +667,18 @@ function displayAudioPlayer(totalDuration, mp3Exists) {
     
     DOM.btnDownloadWav.classList.remove('hidden');
     DOM.btnDownloadMp3.classList.toggle('hidden', !mp3Exists);
+
+    // Reset master player source to force cache bust on next play
+    DOM.audioMainNode.removeAttribute('src');
+    DOM.btnPlaybackToggle.textContent = '▶';
 }
 
 function setupAudioPlaybackControls() {
     DOM.btnPlaybackToggle.addEventListener('click', () => {
-        if (!DOM.audioMainNode.src || !activePlayingChunk) {
-            DOM.audioMainNode.src = '/api/audio/final';
+        if (!DOM.audioMainNode.src || activePlayingChunk) {
+            DOM.audioMainNode.src = `/api/audio/final?t=${Date.now()}`;
             DOM.playbackTitle.textContent = 'Full Output Narration';
+            activePlayingChunk = null;
         }
         
         if (DOM.audioMainNode.paused) {

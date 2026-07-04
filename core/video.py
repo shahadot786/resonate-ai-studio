@@ -610,23 +610,47 @@ def _search_wikimedia_image(keyword: str) -> Optional[str]:
 # ── Media download ───────────────────────────────────────────
 
 
+def get_retry_session(retries=3, backoff_factor=1.0, status_forcelist=(429, 500, 502, 503, 504)):
+    from requests.adapters import HTTPAdapter
+    from urllib3.util import Retry
+    session = requests.Session()
+    retry = Retry(
+        total=retries,
+        read=retries,
+        connect=retries,
+        backoff_factor=backoff_factor,
+        status_forcelist=status_forcelist,
+        raise_on_status=False
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount('http://', adapter)
+    session.mount('https://', adapter)
+    return session
+
+
 def download_media(url: str, dest_path: str) -> bool:
     """Download a file from URL to dest_path. Returns True on success."""
     try:
         os.makedirs(os.path.dirname(dest_path) or ".", exist_ok=True)
-        req = urllib.request.Request(
-            url,
-            headers={"User-Agent": "NarratorBRoll/1.0"},
-        )
-        with urllib.request.urlopen(req, timeout=60) as response, \
-                open(dest_path, "wb") as out_file:
-            shutil.copyfileobj(response, out_file)
+        session = get_retry_session()
+        headers = {"User-Agent": "NarratorBRoll/1.0"}
+        
+        with session.get(url, headers=headers, stream=True, timeout=60) as r:
+            r.raise_for_status()
+            with open(dest_path, "wb") as out_file:
+                for chunk in r.iter_content(chunk_size=8192):
+                    if chunk:
+                        out_file.write(chunk)
+                        
         # Sanity check: file must be > 1KB
         return os.path.exists(dest_path) and os.path.getsize(dest_path) > 1024
     except Exception as e:
         print(f"  ✗ Download failed ({url[:60]}…): {e}")
         if os.path.exists(dest_path):
-            os.remove(dest_path)
+            try:
+                os.remove(dest_path)
+            except Exception:
+                pass
         return False
 
 
@@ -1211,8 +1235,33 @@ def merge_segments_with_audio(
             print("  ✗ Concat timed out")
             return False
         if r.returncode != 0:
-            print("  ✗ Concat failed:", r.stderr.decode()[-400:])
-            return False
+            print("  ⚠ Concat demuxer failed. Attempting robust transcoding filter complex fallback...")
+            inputs = []
+            filter_str = ""
+            for idx, p in enumerate(segment_paths):
+                inputs.extend(["-i", p])
+                filter_str += f"[{idx}:v]"
+            filter_str += f"concat=n={len(segment_paths)}:v=1:a=0[outv]"
+            
+            try:
+                r_fallback = subprocess.run(
+                    [
+                        "ffmpeg", "-y",
+                        *inputs,
+                        "-filter_complex", filter_str,
+                        "-map", "[outv]",
+                        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
+                        raw_concat,
+                    ],
+                    capture_output=True,
+                    timeout=600,
+                )
+                if r_fallback.returncode != 0:
+                    print("  ✗ Fallback transcode concat failed:", r_fallback.stderr.decode()[-400:])
+                    return False
+            except Exception as fe:
+                print("  ✗ Fallback transcode concat error:", fe)
+                return False
 
         # ── Step 2: Ensure video >= audio duration ────────────
         audio_dur = _get_duration_secs(audio_path)

@@ -214,6 +214,15 @@ def main():
     ok = merge_segments_with_audio(final_paths, audio_file, output_file, fps)
 
     if ok:
+        raw_cache_dir = os.path.join(segments_dir, "raw")
+        if os.path.exists(raw_cache_dir):
+            try:
+                import shutil
+                shutil.rmtree(raw_cache_dir)
+                print("  ✓ Cleaned raw video cache directory to free disk space")
+            except Exception as _ce:
+                print(f"  ⚠ Failed to clean raw cache: {_ce}")
+
         size_mb = os.path.getsize(output_file) / (1024 * 1024)
         progress("done", status="done",
                  message=f"Video ready! {len(final_paths)} segments, {size_mb:.1f} MB",
