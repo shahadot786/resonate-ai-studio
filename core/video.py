@@ -57,6 +57,65 @@ def _groq_keyword_alternatives(text: str, groq_keys: list[str]) -> list[str]:
     if not groq_keys:
         return []
 
+def _update_groq_stats(key: str, success: bool, rate_limited: bool):
+    import json
+    import os
+    from datetime import datetime
+
+    stats_file = "outputs/.groq_stats.json"
+    os.makedirs("outputs", exist_ok=True)
+
+    stats = {"total_requests": 0, "successful_requests": 0, "rate_limits_hit": 0, "keys": {}}
+    if os.path.exists(stats_file):
+        try:
+            with open(stats_file) as f:
+                stats = json.load(f)
+        except Exception:
+            pass
+
+    if "keys" not in stats or not isinstance(stats["keys"], dict):
+        stats["keys"] = {}
+
+    stats["total_requests"] += 1
+    if success:
+        stats["successful_requests"] += 1
+    if rate_limited:
+        stats["rate_limits_hit"] += 1
+
+    key_id = key[:16] + "..."
+    key_stats = stats["keys"].get(key_id, {
+        "prefix": key[:12] + "...",
+        "status": "active",
+        "requests": 0,
+        "rate_limits": 0,
+        "last_used": ""
+    })
+
+    key_stats["requests"] += 1
+    key_stats["last_used"] = datetime.now().isoformat()
+    if rate_limited:
+        key_stats["status"] = "rate_limited (429)"
+        key_stats["rate_limits"] += 1
+    elif success:
+        key_stats["status"] = "active"
+
+    stats["keys"][key_id] = key_stats
+
+    try:
+        with open(stats_file, "w") as f:
+            json.dump(stats, f, indent=2)
+    except Exception:
+        pass
+
+
+def _groq_keyword_alternatives(text: str, groq_keys: list[str]) -> list[str]:
+    """
+    Generate 5 semantically diverse stock-search queries for a script line using Groq.
+    Rotates through the list of keys if rate limited (429).
+    """
+    if not groq_keys:
+        return []
+
     prompt = (
         "You are an expert B-roll director for YouTube narration videos. Your job is to pick VISUAL stock footage search keywords.\n\n"
         f"NARRATION LINE: \"{text}\"\n\n"
@@ -87,6 +146,7 @@ def _groq_keyword_alternatives(text: str, groq_keys: list[str]) -> list[str]:
                 timeout=10
             )
             if resp.status_code == 200:
+                _update_groq_stats(key, success=True, rate_limited=False)
                 body = resp.json()
                 content = body["choices"][0]["message"]["content"].strip()
                 lines = [line.strip().lower() for line in content.splitlines() if line.strip()]
@@ -100,11 +160,14 @@ def _groq_keyword_alternatives(text: str, groq_keys: list[str]) -> list[str]:
                 if len(cleaned) >= 2:
                     return cleaned[:5]
             elif resp.status_code == 429:
+                _update_groq_stats(key, success=False, rate_limited=True)
                 print(f"  ⚠ Groq Key {key[:12]}... hit rate limit (429), rotating to next key...")
                 continue
             else:
+                _update_groq_stats(key, success=False, rate_limited=False)
                 print(f"  ⚠ Groq Key {key[:12]}... error {resp.status_code}: {resp.text[:100]}")
         except Exception as e:
+            _update_groq_stats(key, success=False, rate_limited=False)
             print(f"  ⚠ Groq key extraction error: {e}")
             continue
     return []
@@ -161,6 +224,7 @@ def _groq_subclip_keyword_alternatives(text: str, n_subs: int, groq_keys: list[s
                 timeout=15
             )
             if resp.status_code == 200:
+                _update_groq_stats(key, success=True, rate_limited=False)
                 body = resp.json()
                 content = body["choices"][0]["message"]["content"].strip()
                 data = json.loads(content)
@@ -182,11 +246,14 @@ def _groq_subclip_keyword_alternatives(text: str, n_subs: int, groq_keys: list[s
                     if valid:
                         return result
             elif resp.status_code == 429:
+                _update_groq_stats(key, success=False, rate_limited=True)
                 print(f"  ⚠ Groq Key {key[:12]}... hit rate limit (429), rotating...")
                 continue
             else:
+                _update_groq_stats(key, success=False, rate_limited=False)
                 print(f"  ⚠ Groq Key {key[:12]}... error {resp.status_code}: {resp.text[:100]}")
         except Exception as e:
+            _update_groq_stats(key, success=False, rate_limited=False)
             print(f"  ⚠ Groq subclip extraction error: {e}")
             continue
     return []

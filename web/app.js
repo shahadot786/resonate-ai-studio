@@ -2096,6 +2096,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initVoicePickerModal();
     initVoiceSuggestModal();
     initHistoryDrawer();
+    initStatsDrawer();
 });
 
 
@@ -2401,4 +2402,113 @@ function setupReviewDrawer() {
             closeDrawer();
         }
     });
+}
+
+
+// ── Statistics Drawer (📊 Stats) ─────────────────────────────
+
+function initStatsDrawer() {
+    const openBtn  = document.getElementById('btn-open-stats');
+    const drawer   = document.getElementById('stats-drawer');
+    const backdrop = document.getElementById('stats-backdrop');
+    const closeBtn = document.getElementById('stats-drawer-close');
+
+    if (!openBtn || !drawer) return;
+
+    function openDrawer() {
+        drawer.classList.remove('hidden');
+        backdrop.classList.remove('hidden');
+        loadStats();
+    }
+
+    function closeDrawer() {
+        drawer.classList.add('hidden');
+        backdrop.classList.add('hidden');
+    }
+
+    openBtn.addEventListener('click', openDrawer);
+    if (closeBtn) closeBtn.addEventListener('click', closeDrawer);
+    backdrop.addEventListener('click', closeDrawer);
+
+    // Keyboard ESC to close
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && !drawer.classList.contains('hidden')) {
+            closeDrawer();
+        }
+    });
+}
+
+async function loadStats() {
+    try {
+        const r = await fetch('/api/video/stats');
+        if (!r.ok) throw new Error('Failed to fetch stats');
+        const data = await r.json();
+
+        // 1. Populate Groq summary
+        document.getElementById('stat-groq-total').textContent = data.groq.total_requests || 0;
+        document.getElementById('stat-groq-success').textContent = data.groq.successful_requests || 0;
+        document.getElementById('stat-groq-limits').textContent = data.groq.rate_limits_hit || 0;
+
+        // 2. Populate Groq keys status list
+        const keysList = document.getElementById('stats-keys-list');
+        keysList.innerHTML = '';
+        
+        const keysMap = data.groq.keys || {};
+        const keyIds = Object.keys(keysMap);
+        if (keyIds.length === 0) {
+            keysList.innerHTML = `<div style="font-size: 0.8rem; color: rgba(255,255,255,0.4); text-align: center; padding: 8px;">No keys used yet. Run a generation!</div>`;
+        } else {
+            keyIds.forEach((kid, idx) => {
+                const kinfo = keysMap[kid];
+                const statusColor = kinfo.status.includes('rate_limited') ? '#f5222d' : '#52c41a';
+                const keyRow = document.createElement('div');
+                keyRow.style = "display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.15); padding: 8px 12px; border-radius: 6px; font-size: 0.8rem;";
+                
+                // Format last used date
+                let lastUsedStr = 'Never';
+                if (kinfo.last_used) {
+                    try {
+                        const date = new Date(kinfo.last_used);
+                        lastUsedStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                    } catch(e) {}
+                }
+
+                keyRow.innerHTML = `
+                    <div>
+                        <div style="font-weight: 600; color: #fff;">Key #${idx + 1}: <span style="font-family: monospace; color: rgba(255,255,255,0.7);">${kinfo.prefix}</span></div>
+                        <div style="font-size: 0.7rem; color: rgba(255,255,255,0.4); margin-top: 2px;">Last call: ${lastUsedStr}</div>
+                    </div>
+                    <div style="text-align: right;">
+                        <span style="display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 0.65rem; font-weight: 700; background: rgba(${statusColor === '#52c41a' ? '82,196,26' : '245,34,45'}, 0.15); color: ${statusColor};">${kinfo.status.toUpperCase()}</span>
+                        <div style="font-size: 0.7rem; color: rgba(255,255,255,0.5); margin-top: 2px;">Calls: ${kinfo.requests}</div>
+                    </div>
+                `;
+                keysList.appendChild(keyRow);
+            });
+        }
+
+        // 3. Populate general resources
+        document.getElementById('stat-word-count').textContent = data.script.word_count || 0;
+        document.getElementById('stat-segments-count').textContent = data.script.segments_count || 0;
+        document.getElementById('stat-segments-size').textContent = `${data.script.segments_size_mb || 0} MB`;
+        document.getElementById('stat-cache-size').textContent = `${data.script.cache_size_mb || 0} MB`;
+
+        // 4. Populate stock status
+        const stockEl = document.getElementById('stat-stock-status');
+        const activeApis = [];
+        if (data.apis.pexels_loaded) activeApis.push('Pexels');
+        if (data.apis.pixabay_loaded) activeApis.push('Pixabay');
+        if (data.apis.coverr_loaded) activeApis.push('Coverr');
+        
+        if (activeApis.length > 0) {
+            stockEl.textContent = activeApis.join(' / ');
+            stockEl.style.color = '#52c41a';
+        } else {
+            stockEl.textContent = 'None Loaded';
+            stockEl.style.color = '#f5222d';
+        }
+
+    } catch (err) {
+        console.error('Stats load error:', err);
+    }
 }

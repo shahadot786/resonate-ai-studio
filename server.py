@@ -1176,6 +1176,73 @@ async def video_events_sse(request: Request):
     )
 
 
+@app.get("/api/video/stats")
+async def get_video_stats():
+    import json
+    stats_file = "outputs/.groq_stats.json"
+    groq_stats = {"total_requests": 0, "successful_requests": 0, "rate_limits_hit": 0, "keys": {}}
+    if os.path.exists(stats_file):
+        try:
+            with open(stats_file) as f:
+                groq_stats = json.load(f)
+        except Exception:
+            pass
+
+    if "keys" not in groq_stats or not isinstance(groq_stats["keys"], dict):
+        groq_stats["keys"] = {}
+
+    # Ensure all loaded keys exist in groq_stats["keys"]
+    for key in getattr(config, "GROQ_API_KEYS", []):
+        key_id = key[:16] + "..."
+        if key_id not in groq_stats["keys"]:
+            groq_stats["keys"][key_id] = {
+                "prefix": key[:12] + "...",
+                "status": "active" if key else "missing",
+                "requests": 0,
+                "rate_limits": 0,
+                "last_used": ""
+            }
+
+    word_count = 0
+    if os.path.exists(config.SCRIPT_FILE):
+        try:
+            with open(config.SCRIPT_FILE) as f:
+                word_count = len(f.read().split())
+        except Exception:
+            pass
+
+    segments_count = 0
+    segments_size = 0
+    if os.path.exists(config.VIDEO_SEGMENTS_DIR):
+        for root, dirs, files in os.walk(config.VIDEO_SEGMENTS_DIR):
+            for file in files:
+                if file.endswith(".mp4"):
+                    segments_count += 1
+                    segments_size += os.path.getsize(os.path.join(root, file))
+
+    cache_size = 0
+    raw_dir = os.path.join(config.VIDEO_SEGMENTS_DIR, "raw")
+    if os.path.exists(raw_dir):
+        for root, dirs, files in os.walk(raw_dir):
+            for file in files:
+                cache_size += os.path.getsize(os.path.join(root, file))
+
+    return {
+        "groq": groq_stats,
+        "script": {
+            "word_count": word_count,
+            "segments_count": segments_count,
+            "segments_size_mb": round(segments_size / (1024 * 1024), 2),
+            "cache_size_mb": round(cache_size / (1024 * 1024), 2),
+        },
+        "apis": {
+            "pexels_loaded": bool(config.PEXELS_API_KEY),
+            "pixabay_loaded": bool(config.PIXABAY_API_KEY),
+            "coverr_loaded": bool(config.COVERR_API_KEY),
+        }
+    }
+
+
 @app.get("/api/video/download")
 async def download_video():
     path = config.VIDEO_OUTPUT_FILE

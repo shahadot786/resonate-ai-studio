@@ -731,7 +731,7 @@ input[type="range"]::-webkit-slider-thumb:hover {
   flex-direction: column;
   height: 100vh;
   min-height: 0;
-  width: 400px;
+  width: 500px;
   overflow: hidden;
 }
 
@@ -2058,6 +2058,9 @@ input[type="range"]::-webkit-slider-thumb:hover {
   overflow: hidden;
 }
 .history-drawer.hidden { display: none; }
+
+.stats-drawer.hidden { display: none !important; }
+.stats-backdrop.hidden { display: none !important; }
 
 @keyframes drawer-slide-in {
   from { transform: translateX(100%); opacity: 0; }

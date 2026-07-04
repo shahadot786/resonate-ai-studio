@@ -211,6 +211,7 @@
                 </div>
                 <div class="toolbar-actions">
                     <button class="btn btn-primary hidden" id="btn-open-review-drawer-toolbar" title="Review B-Roll Clips" style="background: rgba(124, 157, 255, 0.15); border-color: #7c9dff; color: #7c9dff; display: inline-flex; align-items: center; gap: 6px; font-weight: 600;">🎞 Review Clips</button>
+                    <button class="btn btn-secondary" id="btn-open-stats" title="View Pipeline Statistics" style="display: inline-flex; align-items: center; gap: 6px; margin-right: 8px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.15); color: #fff;">📊 Stats</button>
                     <button class="btn btn-history" id="btn-open-history" title="Generation History">📂 History <span class="history-count-badge" id="history-count-badge"></span></button>
                     <button class="btn btn-save" id="btn-save-script">💾 Save</button>
                 </div>
@@ -403,6 +404,74 @@
         <div class="history-empty hidden" id="history-empty">
             <div class="history-empty-icon">🎤</div>
             <div class="history-empty-msg">No generations yet.<br>Run a generation and it will appear here.</div>
+        </div>
+    </aside>
+
+    <!-- ══════════ STATISTICS DRAWER ══════════ -->
+    <div class="stats-backdrop hidden" id="stats-backdrop" style="position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.5); z-index: 1100; backdrop-filter: blur(4px);"></div>
+    <aside class="stats-drawer hidden" id="stats-drawer" style="position: fixed; top: 0; right: 0; width: 450px; height: 100vh; background: var(--bg-sidebar); border-left: 1px solid var(--border); box-shadow: -10px 0 30px rgba(0,0,0,0.3); z-index: 1200; display: flex; flex-direction: column; padding: 20px; transition: transform 0.3s ease;">
+        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 16px; margin-bottom: 20px;">
+            <div>
+                <h2 style="font-size: 1.3rem; font-weight: 700; color: #fff; margin: 0;">📊 Pipeline Statistics</h2>
+                <p style="font-size: 0.8rem; color: rgba(255,255,255,0.5); margin: 4px 0 0;">Real-time Groq API and pipeline stats.</p>
+            </div>
+            <button class="modal-close-btn" id="stats-drawer-close" style="background: none; border: none; color: #fff; font-size: 1.2rem; cursor: pointer;">✕</button>
+        </div>
+        
+        <div style="flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 20px;">
+            <!-- Groq Summary Stats -->
+            <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 12px; padding: 16px;">
+                <h3 style="font-size: 0.95rem; font-weight: 600; color: var(--primary); margin: 0 0 12px;">🤖 Groq API Summary</h3>
+                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; text-align: center;">
+                    <div style="background: rgba(0,0,0,0.2); padding: 10px; border-radius: 8px;">
+                        <div id="stat-groq-total" style="font-size: 1.25rem; font-weight: 700; color: #fff;">0</div>
+                        <div style="font-size: 0.7rem; color: rgba(255,255,255,0.4); margin-top: 4px;">Total Req</div>
+                    </div>
+                    <div style="background: rgba(0,0,0,0.2); padding: 10px; border-radius: 8px;">
+                        <div id="stat-groq-success" style="font-size: 1.25rem; font-weight: 700; color: #52c41a;">0</div>
+                        <div style="font-size: 0.7rem; color: rgba(255,255,255,0.4); margin-top: 4px;">Success</div>
+                    </div>
+                    <div style="background: rgba(0,0,0,0.2); padding: 10px; border-radius: 8px;">
+                        <div id="stat-groq-limits" style="font-size: 1.25rem; font-weight: 700; color: #f5222d;">0</div>
+                        <div style="font-size: 0.7rem; color: rgba(255,255,255,0.4); margin-top: 4px;">Rate Limit (429)</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Groq Keys Status -->
+            <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 12px; padding: 16px;">
+                <h3 style="font-size: 0.95rem; font-weight: 600; color: var(--primary); margin: 0 0 12px;">🔑 Rotating Keys Pool (7 keys)</h3>
+                <div id="stats-keys-list" style="display: flex; flex-direction: column; gap: 8px;">
+                    <!-- Dynamically populated key items -->
+                </div>
+            </div>
+
+            <!-- Pipeline Storage / Usage Stats -->
+            <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 12px; padding: 16px;">
+                <h3 style="font-size: 0.95rem; font-weight: 600; color: var(--primary); margin: 0 0 12px;">📁 Pipeline Resources</h3>
+                <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem; color: rgba(255,255,255,0.85);">
+                    <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+                        <td style="padding: 8px 0; color: rgba(255,255,255,0.5);">Script Word Count</td>
+                        <td id="stat-word-count" style="padding: 8px 0; text-align: right; font-weight: 600;">0</td>
+                    </tr>
+                    <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+                        <td style="padding: 8px 0; color: rgba(255,255,255,0.5);">Segments Count</td>
+                        <td id="stat-segments-count" style="padding: 8px 0; text-align: right; font-weight: 600;">0</td>
+                    </tr>
+                    <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+                        <td style="padding: 8px 0; color: rgba(255,255,255,0.5);">Video Segments Size</td>
+                        <td id="stat-segments-size" style="padding: 8px 0; text-align: right; font-weight: 600;">0.00 MB</td>
+                    </tr>
+                    <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+                        <td style="padding: 8px 0; color: rgba(255,255,255,0.5);">B-Roll Video Cache</td>
+                        <td id="stat-cache-size" style="padding: 8px 0; text-align: right; font-weight: 600;">0.00 MB</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 8px 0; color: rgba(255,255,255,0.5);">Stock APIs Status</td>
+                        <td id="stat-stock-status" style="padding: 8px 0; text-align: right; font-weight: 600; color: #52c41a;">Active</td>
+                    </tr>
+                </table>
+            </div>
         </div>
     </aside>
 
