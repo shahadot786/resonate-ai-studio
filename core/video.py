@@ -1326,3 +1326,397 @@ def merge_segments_with_audio(
                 except Exception:
                     pass
 
+
+# ── Automated Shorts Compilation Helpers ─────────────────────────
+
+def image_to_video_dynamic(
+    img_path: str,
+    out_path: str,
+    duration: float,
+    motion: str = "random",
+    resolution: str = "1080x1920",
+    fps: int = 30,
+) -> bool:
+    """
+    Convert a static image to a portrait video segment with a randomized Ken Burns pan/zoom effect.
+    """
+    import random
+    import os
+    random.seed(os.urandom(4))
+    w, h = resolution.split("x")
+    total_frames = int(duration * fps)
+    
+    # Randomize the motion if requested
+    motion_types = ["zoom_in", "zoom_out", "pan_left", "pan_right"]
+    selected_motion = motion
+    if motion == "random" or motion not in motion_types:
+        selected_motion = random.choice(motion_types)
+        
+    print(f"  🎬 Creating clip ({duration:.2f}s) via motion: {selected_motion}")
+    
+    # Construct FFmpeg zoompan filter expression based on the selected motion type
+    # z: zoom factor. x, y: crop offsets. s: output size.
+    if selected_motion == "zoom_in":
+        # Slow zoom in from 1.0 to 1.12
+        zoom_expr = "min(1.12, zoom+0.0004)"
+        x_expr = "iw/2-(iw/zoom/2)"
+        y_expr = "ih/2-(ih/zoom/2)"
+    elif selected_motion == "zoom_out":
+        # Slow zoom out from 1.12 down to 1.0
+        zoom_expr = f"max(1.0, 1.12-0.0004*on)"
+        x_expr = "iw/2-(iw/zoom/2)"
+        y_expr = "ih/2-(ih/zoom/2)"
+    elif selected_motion == "pan_left":
+        # Fixed zoom at 1.12, pan crop offset from right to left
+        zoom_expr = "1.12"
+        x_expr = f"(iw-(iw/zoom))*(1-on/{total_frames})"
+        y_expr = "ih/2-(ih/zoom/2)"
+    else:  # pan_right
+        # Fixed zoom at 1.12, pan crop offset from left to right
+        zoom_expr = "1.12"
+        x_expr = f"(iw-(iw/zoom))*(on/{total_frames})"
+        y_expr = "ih/2-(ih/zoom/2)"
+        
+    vf = (
+        f"zoompan=z='{zoom_expr}':d={total_frames}:x='{x_expr}':y='{y_expr}':s={w}x{h}:fps={fps},"
+        f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
+        f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black"
+    )
+    
+    try:
+        r = subprocess.run(
+            [
+                "ffmpeg", "-y",
+                "-loop", "1",
+                "-i", img_path,
+                "-vf", vf,
+                "-t", str(duration),
+                "-pix_fmt", "yuv420p",
+                "-c:v", "libx264",
+                "-preset", "ultrafast",
+                "-crf", "28",
+                out_path
+            ],
+            capture_output=True,
+            timeout=120
+        )
+        if r.returncode != 0:
+            print(f"  ✗ FFmpeg dynamic image-to-video conversion failed: {r.stderr.decode('utf-8', errors='ignore')}")
+        return r.returncode == 0
+    except Exception as e:
+        print(f"  ⚠ Failed dynamic image_to_video conversion: {e}")
+        return False
+
+
+def generate_srt_file(chunks: list[dict], durations: list[float], srt_path: str):
+    """
+    Generate an SRT file matching synthesized speech chunks and durations.
+    """
+    def _format_time(seconds: float) -> str:
+        h = int(seconds // 3600)
+        m = int((seconds % 3600) // 60)
+        s = int(seconds % 60)
+        ms = int((seconds - int(seconds)) * 1000)
+        return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+    os.makedirs(os.path.dirname(srt_path) or ".", exist_ok=True)
+    
+    cumulative_time = 0.0
+    with open(srt_path, "w", encoding="utf-8") as f:
+        for idx, (chunk, dur) in enumerate(zip(chunks, durations)):
+            text = chunk["text"].strip()
+            words = text.split()
+            if len(words) > 7:
+                half = len(words) // 2
+                text = " ".join(words[:half]) + "\n" + " ".join(words[half:])
+                
+            start = cumulative_time
+            end = cumulative_time + dur
+            
+            f.write(f"{idx + 1}\n")
+            f.write(f"{_format_time(start)} --> {_format_time(end)}\n")
+            f.write(f"{text}\n\n")
+            
+            cumulative_time += dur
+
+
+def generate_ass_file(chunks: list[dict], durations: list[float], ass_path: str):
+    """
+    Generate an Advanced SubStation Alpha (.ass) subtitle file.
+    Randomizes styles (fonts, colors, capsule backgrounds vs outlines) and motion transitions (pop, slide, fade)
+    for every video creation to ensure captions look unique and engaging.
+    """
+    import random
+    os.makedirs(os.path.dirname(ass_path) or ".", exist_ok=True)
+    
+    # Randomize font list (highly legible sans-serif/impactful typography)
+    fonts = ["Impact", "Arial Black", "Helvetica", "Trebuchet MS", "Futura", "Verdana", "Gill Sans MT"]
+    font_name = random.choice(fonts)
+    
+    # Randomize primary fill color (ASS uses Hex AABBGGRR - opaque alpha is 00)
+    primary_colors = [
+        "0000FFFF",  # Bright Yellow (BB=00, GG=FF, RR=FF)
+        "00FFFFFF",  # Pure White
+        "0000FF00",  # Opaque Neon Green
+        "00FFFF00",  # Neon Cyan
+        "000080FF",  # Neon Orange
+        "00FF00FF",  # Bright Hot Pink
+    ]
+    primary_color = random.choice(primary_colors)
+    
+    # Border style: 1 = outline + shadow, 3 = opaque capsule strip background (like TikTok/Instagram)
+    border_style = random.choice([1, 1, 3]) 
+    
+    if border_style == 3:
+        outline = 0
+        shadow = 0
+        back_color = "A0000000"  # Semi-transparent black capsule strip background
+        outline_color = "00000000"
+    else:
+        outline = random.uniform(2.5, 4.0)
+        shadow = random.choice([0, 1, 2])
+        back_color = "00000000"
+        outline_color = "00000000"  # Black outline
+        
+    font_size = random.randint(62, 76)
+    margin_v = random.randint(280, 360)  # Center-bottom position
+    
+    # Randomize caption animation style for this video
+    anim_styles = ["pop", "fade", "slide", "none"]
+    anim_style = random.choice(anim_styles)
+    
+    def _format_time_ass(seconds: float) -> str:
+        h = int(seconds // 3600)
+        m = int((seconds % 3600) // 60)
+        s = int(seconds % 60)
+        cs = int(round((seconds - int(seconds)) * 100)) # centiseconds
+        if cs >= 100:
+            s += 1
+            cs -= 100
+        return f"{h:01d}:{m:02d}:{s:02d}.{cs:02d}"
+
+    header = f"""[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,{font_name},{font_size},&H{primary_color},&H0000FFFF,&H{outline_color},&H{back_color},-1,0,0,0,100,100,0,0,{border_style},{outline:.1f},{shadow},2,80,80,{margin_v},1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+    
+    cumulative_time = 0.0
+    with open(ass_path, "w", encoding="utf-8") as f:
+        f.write(header)
+        for idx, (chunk, dur) in enumerate(zip(chunks, durations)):
+            text = chunk["text"].strip()
+            
+            # Split long text for visual balance
+            words = text.split()
+            if len(words) > 7:
+                half = len(words) // 2
+                text = " ".join(words[:half]) + "\\N" + " ".join(words[half:])
+                
+            start_str = _format_time_ass(cumulative_time)
+            end_str = _format_time_ass(cumulative_time + dur)
+            
+            # Formulate ASS animation tags
+            anim_tag = ""
+            dur_ms = int(dur * 1000)
+            
+            if anim_style == "pop":
+                # Quick bounce scale in
+                pop_time = min(300, int(dur_ms * 0.35))
+                anim_tag = f"{{\\t(0,{pop_time},\\fscx112\\fscy112)}}{{\\t({pop_time},{pop_time*2},\\fscx100\\fscy100)}}"
+            elif anim_style == "fade":
+                # Smooth fade transitions
+                fade_time = min(250, int(dur_ms * 0.2))
+                anim_tag = f"{{\\fad({fade_time},{fade_time})}}"
+            elif anim_style == "slide":
+                # Slide up from bottom
+                slide_time = min(350, int(dur_ms * 0.25))
+                dest_y = margin_v
+                start_y = margin_v - 50
+                anim_tag = f"{{\\move(540, {1920-start_y}, 540, {1920-dest_y}, 0, {slide_time})}}"
+                
+            f.write(f"Dialogue: 0,{start_str},{end_str},Default,,0,0,0,,{anim_tag}{text}\n")
+            cumulative_time += dur
+
+
+def generate_vtt_file(chunks: list[dict], durations: list[float], vtt_path: str):
+    """
+    Generate a WebVTT (.vtt) file for browser HTML5 players.
+    """
+    def _format_time_vtt(seconds: float) -> str:
+        h = int(seconds // 3600)
+        m = int((seconds % 3600) // 60)
+        s = int(seconds % 60)
+        ms = int((seconds - int(seconds)) * 1000)
+        return f"{h:02d}:{m:02d}:{s:02d}.{ms:03d}"
+
+    os.makedirs(os.path.dirname(vtt_path) or ".", exist_ok=True)
+    
+    cumulative_time = 0.0
+    with open(vtt_path, "w", encoding="utf-8") as f:
+        f.write("WEBVTT\n\n")
+        for idx, (chunk, dur) in enumerate(zip(chunks, durations)):
+            text = chunk["text"].strip()
+            # Split long sentences for visual neatness
+            words = text.split()
+            if len(words) > 7:
+                half = len(words) // 2
+                text = " ".join(words[:half]) + "\n" + " ".join(words[half:])
+                
+            start = cumulative_time
+            end = cumulative_time + dur
+            
+            f.write(f"{idx + 1}\n")
+            f.write(f"{_format_time_vtt(start)} --> {_format_time_vtt(end)}\n")
+            f.write(f"{text}\n\n")
+            
+            # Account for the tiny silence padding between segments (0.15s) in our timing
+            # to keep visual captions in perfect sync with the audio track
+            cumulative_time += dur + 0.15
+
+
+
+
+def compile_transitions_xfade(
+    clips: list[str],
+    durations: list[float],
+    transition_style: str,
+    out_path: str,
+    resolution: str = "1080x1920",
+    fps: int = 30,
+) -> bool:
+    """
+    Compile multiple clips together using smooth cascading xfade filters in FFmpeg.
+    """
+    import random
+    import os
+    random.seed(os.urandom(4))
+    if not clips:
+        return False
+    if len(clips) == 1:
+        import shutil
+        shutil.copy2(clips[0], out_path)
+        return True
+
+    w, h = resolution.split("x")
+    temp_dir = out_path + "_xfade_parts"
+    os.makedirs(temp_dir, exist_ok=True)
+
+    inputs = []
+    for c in clips:
+        inputs.extend(["-i", c])
+
+    transition_dur = 0.3  # Snappy crossfades suited for mobile content
+    filter_complex = ""
+    last_label = "[0:v]"
+    cumulative_duration = durations[0]
+    
+    # Supported transition styles list
+    styles = ["fade", "wipeleft", "wiperight", "slideleft", "slideright", "circlecrop", "zoomin", "slideup"]
+    
+    for idx in range(len(clips) - 1):
+        next_clip_label = f"[{idx+1}:v]"
+        out_label = f"[v{idx}]"
+        
+        # Determine transition offset (where the fade begins)
+        offset = cumulative_duration - transition_dur
+        
+        t_style = transition_style
+        if t_style == "random":
+            t_style = random.choice(styles)
+        elif t_style not in styles:
+            t_style = "fade"
+            
+        filter_complex += f"{last_label}{next_clip_label}xfade=transition={t_style}:duration={transition_dur}:offset={offset:.3f}"
+        if idx == len(clips) - 2:
+            # Final output mapping
+            filter_complex += f",format=yuv420p[outv]"
+        else:
+            filter_complex += f"{out_label}; "
+            
+        last_label = out_label
+        # Subtract transition duration since clips overlap
+        cumulative_duration = cumulative_duration + durations[idx+1] - transition_dur
+
+    try:
+        r = subprocess.run(
+            [
+                "ffmpeg", "-y",
+                *inputs,
+                "-filter_complex", filter_complex,
+                "-map", "[outv]",
+                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
+                "-an", out_path
+            ],
+            capture_output=True,
+            timeout=300
+        )
+        return r.returncode == 0
+    except Exception as e:
+        print(f"  ⚠ Transition compilation failed: {e}")
+        return False
+    finally:
+        import shutil
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def burn_subtitles_into_video(video_path: str, srt_path: str, out_path: str) -> bool:
+    """
+    Burn subtitles into the video stream using styled text boxes centered for Shorts.
+    """
+    if not os.path.exists(srt_path):
+        print("  ⚠ Subtitle file not found. Skipping burn.")
+        import shutil
+        shutil.copy2(video_path, out_path)
+        return True
+
+    # Escape path separators for FFmpeg filter syntax
+    escaped_srt_path = srt_path.replace("\\", "/").replace(":", "\\:")
+    
+    if srt_path.endswith(".ass"):
+        # ASS files contain embedded style sheets and animations; do not override via command line
+        vf_expr = f"subtitles='{escaped_srt_path}'"
+    else:
+        # Standard fallback SRT styling
+        vf_expr = (
+            f"subtitles='{escaped_srt_path}':force_style="
+            f"'Alignment=2,FontSize=18,PrimaryColour=&H00FFFF,OutlineColour=&H000000,"
+            f"BorderStyle=1,Outline=2.5,Shadow=0,MarginV=180,Fontname=Impact'"
+        )
+
+    
+    try:
+        r = subprocess.run(
+            [
+                "ffmpeg", "-y",
+                "-i", video_path,
+                "-vf", vf_expr,
+                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
+                "-c:a", "copy",
+                out_path
+            ],
+            capture_output=True,
+            timeout=120
+        )
+        if r.returncode == 0:
+            return True
+        else:
+            print(f"  ⚠ FFmpeg subtitle overlay failed: {r.stderr.decode('utf-8', errors='ignore')[-300:]}")
+            import shutil
+            shutil.copy2(video_path, out_path)
+            return True
+    except Exception as e:
+        print(f"  ⚠ Failed to burn subtitles: {e}")
+        import shutil
+        shutil.copy2(video_path, out_path)
+        return True
+
+

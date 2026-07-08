@@ -71,7 +71,62 @@ const DOM = {
     // Audio Output Nodes
     audioMainNode:    $('#audio-main-node'),
     audioRefNode:     $('#audio-ref-node'),
+
+    // Shorts Elements
+    tabStudio:                  $('#tab-studio'),
+    tabShorts:                  $('#tab-shorts'),
+    cardShortsSettings:         $('#card-shorts-settings'),
+    cardVoiceSettings:          $('#card-voice-settings'),
+    cardEmotion:                $('#card-emotion'),
+    cardAudioPipeline:          $('#card-audio-pipeline'),
+    cardVideoOutput:            $('#card-video-output'),
+    workspaceHeader:            $('.workspace-header'),
+    editorFrame:                $('.editor-frame'),
+    tagShelf:                   $('.tag-shelf'),
+    rightConsole:               $('#right-console'),
+    shortsWorkspacePanel:       $('#shorts-workspace-panel'),
+    inputShortsTitle:           $('#input-shorts-title'),
+    btnShortsGenerate:          $('#btn-shorts-generate'),
+    btnShortsClear:             $('#btn-shorts-clear'),
+    btnShortsOpenHistory:       $('#btn-shorts-open-history'),
+    shortsProgressCard:         $('#shorts-progress-card'),
+    shortsProgressTitle:        $('#shorts-progress-title'),
+    shortsProgressBarFill:      $('#shorts-progress-bar-fill'),
+    shortsProgressStatus:       $('#shorts-progress-status'),
+    shortsProgressPercent:      $('#shorts-progress-percent'),
+    btnShortsCancel:            $('#btn-shorts-cancel'),
+    shortsPreviewCard:          $('#shorts-preview-card'),
+    shortsPreviewVoice:         $('#shorts-preview-voice'),
+    shortsPreviewTone:          $('#shorts-preview-tone'),
+    shortsPreviewStyle:         $('#shorts-preview-style'),
+    shortsPreviewTransition:    $('#shorts-preview-transition'),
+    shortsPreviewImgCount:      $('#shorts-preview-imgcount'),
+    shortsPreviewCreationTip:   $('#shorts-preview-creationtip'),
+    shortsPreviewSegments:      $('#shorts-preview-segments'),
+    shortsOutputCard:           $('#shorts-output-card'),
+    btnShortsDownload:          $('#btn-shorts-download'),
+    shortsPlayerNode:           $('#shorts-player-node'),
+    
+    // Shorts Settings
+    shortsDurationSlider:       $('#shorts-duration-slider'),
+    lblShortsDuration:          $('#lbl-shorts-duration'),
+    selectShortsStyle:          $('#select-shorts-style'),
+    selectShortsImageProvider:  $('#select-shorts-image-provider'),
+    checkShortsAutoVoice:       $('#check-shorts-auto-voice'),
+    groupShortsDefaultVoice:    $('#group-shorts-default-voice'),
+    selectShortsDefaultVoice:   $('#select-shorts-default-voice'),
+    checkShortsMusic:           $('#check-shorts-music'),
+    groupShortsMusicDetails:    $('#group-shorts-music-details'),
+    selectShortsMusicFile:      $('#select-shorts-music-file'),
+    sliderShortsMusicVol:       $('#slider-shorts-music-vol'),
+    lblShortsMusicVol:          $('#lbl-shorts-music-vol'),
+    checkShortsCaptions:        $('#check-shorts-captions'),
+    checkShortsTransitions:     $('#check-shorts-transitions'),
+    selectShortsTransitionStyle: $('#select-shorts-transition-style'),
+    sliderShortsClipInterval:   $('#slider-shorts-clip-interval'),
+    lblShortsClipInterval:      $('#lbl-shorts-clip-interval'),
 };
+
 
 let activePlayingChunk = null;
 let sseSource = null;
@@ -116,7 +171,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     setupEventListeners();
     setupModeSelector();
     connectSSE();
+    initShortsCreator();
 });
+
 
 // ── API UTILITIES ──
 async function apiFetch(url, options = {}) {
@@ -2115,6 +2172,7 @@ document.addEventListener('DOMContentLoaded', () => {
 let _historyEntries    = [];   // full list from server
 let _historyAudioEl    = null; // single shared <audio> for history playback
 let _historyPlayingId  = null; // currently playing entry id
+let _historyMode       = 'voice'; // 'voice' or 'shorts'
 
 function _historyFmt(secs) {
     if (!secs) return '0:00';
@@ -2138,7 +2196,8 @@ function _historyFormatBytes(b) {
 }
 
 async function loadHistory() {
-    const data = await apiFetch('/api/history');
+    const url = _historyMode === 'shorts' ? '/api/shorts/history' : '/api/history';
+    const data = await apiFetch(url);
     if (!data) return;
     _historyEntries = data.entries || [];
     renderHistoryEntries(_historyEntries);
@@ -2172,37 +2231,64 @@ function buildHistoryCard(entry) {
     wrap.dataset.entryId = entry.id;
 
     const voiceLabel = KOKORO_VOICE_LABELS[entry.voice] || entry.voice || '—';
-    const speedLabel = entry.speed ? `${entry.speed}x` : '1.0x';
     const dateLabel  = _historyFormatDate(entry.created);
     const audioSize  = _historyFormatBytes(entry.audio_size);
 
-    wrap.innerHTML = `
-        <div class="history-entry-top">
-            <div class="history-entry-row1">
-                <input class="history-title-edit" type="text" value="${escapeHtml(entry.title || entry.id)}" title="Click to rename">
-                <button class="history-entry-del-btn" title="Delete this generation">🗑</button>
-            </div>
-            <div class="history-entry-meta">
-                <span class="hist-tag voice">🎙 ${voiceLabel.split(' (')[0]}</span>
-                <span class="hist-tag speed">⏱ ${speedLabel}</span>
-                ${entry.duration ? `<span class="hist-tag dur">⏳ ${entry.duration}</span>` : ''}
-                ${audioSize ? `<span class="hist-tag dur">${audioSize}</span>` : ''}
-                ${entry.has_video ? `<span class="hist-tag video-tag">🎬 +Video</span>` : ''}
-                <span class="hist-tag date-tag">${dateLabel}</span>
-            </div>
-            <div class="history-mini-player">
-                <button class="hist-play-btn" data-entry-id="${entry.id}">▶</button>
-                <div class="hist-progress-track" data-entry-id="${entry.id}">
-                    <div class="hist-progress-fill" id="hist-fill-${entry.id}"></div>
+    if (_historyMode === 'shorts') {
+        wrap.innerHTML = `
+            <div class="history-entry-top">
+                <div class="history-entry-row1">
+                    <input class="history-title-edit" type="text" value="${escapeHtml(entry.title || entry.id)}" title="Click to rename">
+                    <button class="history-entry-del-btn" title="Delete this generation">🗑</button>
                 </div>
-                <span class="hist-time-label" id="hist-time-${entry.id}">0:00</span>
+                <div class="history-entry-meta">
+                    <span class="hist-tag voice">🎙 ${voiceLabel.split(' (')[0]}</span>
+                    <span class="hist-tag speed" style="border-color: #722ed1; color: #722ed1;">🎨 ${entry.style || 'cinematic'}</span>
+                    ${entry.duration ? `<span class="hist-tag dur">⏳ ${entry.duration.toFixed(1)}s</span>` : ''}
+                    <span class="hist-tag date-tag">${dateLabel}</span>
+                </div>
+                <div class="history-mini-player">
+                    <button class="hist-play-btn" data-entry-id="${entry.id}">▶</button>
+                    <div class="hist-progress-track" data-entry-id="${entry.id}">
+                        <div class="hist-progress-fill" id="hist-fill-${entry.id}"></div>
+                    </div>
+                    <span class="hist-time-label" id="hist-time-${entry.id}">0:00</span>
+                </div>
             </div>
-        </div>
-        <div class="history-entry-actions">
-            <a class="hist-dl-btn" href="/api/history/${entry.id}/audio?fmt=wav" download="${entry.id}.wav" title="Download WAV">⬇ WAV</a>
-            ${entry.has_video ? `<a class="hist-dl-btn video-dl" href="/api/history/${entry.id}/video" download="${entry.id}.mp4" title="Download MP4">🎬 MP4</a>` : ''}
-        </div>
-    `;
+            <div class="history-entry-actions">
+                <a class="hist-dl-btn video-dl" href="/api/shorts/history/${entry.id}/video" download="${entry.id}.mp4" style="width:100%; display:flex; justify-content:center;" title="Download MP4">🎬 Download Video</a>
+            </div>
+        `;
+    } else {
+        const speedLabel = entry.speed ? `${entry.speed}x` : '1.0x';
+        wrap.innerHTML = `
+            <div class="history-entry-top">
+                <div class="history-entry-row1">
+                    <input class="history-title-edit" type="text" value="${escapeHtml(entry.title || entry.id)}" title="Click to rename">
+                    <button class="history-entry-del-btn" title="Delete this generation">🗑</button>
+                </div>
+                <div class="history-entry-meta">
+                    <span class="hist-tag voice">🎙 ${voiceLabel.split(' (')[0]}</span>
+                    <span class="hist-tag speed">⏱ ${speedLabel}</span>
+                    ${entry.duration ? `<span class="hist-tag dur">⏳ ${entry.duration}</span>` : ''}
+                    ${audioSize ? `<span class="hist-tag dur">${audioSize}</span>` : ''}
+                    ${entry.has_video ? `<span class="hist-tag video-tag">🎬 +Video</span>` : ''}
+                    <span class="hist-tag date-tag">${dateLabel}</span>
+                </div>
+                <div class="history-mini-player">
+                    <button class="hist-play-btn" data-entry-id="${entry.id}">▶</button>
+                    <div class="hist-progress-track" data-entry-id="${entry.id}">
+                        <div class="hist-progress-fill" id="hist-fill-${entry.id}"></div>
+                    </div>
+                    <span class="hist-time-label" id="hist-time-${entry.id}">0:00</span>
+                </div>
+            </div>
+            <div class="history-entry-actions">
+                <a class="hist-dl-btn" href="/api/history/${entry.id}/audio?fmt=wav" download="${entry.id}.wav" title="Download WAV">⬇ WAV</a>
+                ${entry.has_video ? `<a class="hist-dl-btn video-dl" href="/api/history/${entry.id}/video" download="${entry.id}.mp4" title="Download MP4">🎬 MP4</a>` : ''}
+            </div>
+        `;
+    }
 
     // ── Play / pause button ──────────────────────────────────
     const playBtn  = wrap.querySelector('.hist-play-btn');
@@ -2238,7 +2324,7 @@ function buildHistoryCard(entry) {
         }
 
         _historyPlayingId = entry.id;
-        _historyAudioEl.src = `/api/history/${entry.id}/audio`;
+        _historyAudioEl.src = _historyMode === 'shorts' ? `/api/shorts/history/${entry.id}/video` : `/api/history/${entry.id}/audio`;
         _historyAudioEl.play();
         playBtn.textContent = '⏸';
         playBtn.classList.add('playing');
@@ -2280,7 +2366,8 @@ function buildHistoryCard(entry) {
     titleInput.addEventListener('blur', async () => {
         const newTitle = titleInput.value.trim();
         if (!newTitle || newTitle === entry.title) return;
-        const res = await apiFetch(`/api/history/${entry.id}`, {
+        const url = _historyMode === 'shorts' ? `/api/shorts/history/${entry.id}` : `/api/history/${entry.id}`;
+        const res = await apiFetch(url, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ title: newTitle }),
@@ -2306,7 +2393,8 @@ function buildHistoryCard(entry) {
             _historyPlayingId = null;
         }
 
-        const res = await apiFetch(`/api/history/${entry.id}`, { method: 'DELETE' });
+        const url = _historyMode === 'shorts' ? `/api/shorts/history/${entry.id}` : `/api/history/${entry.id}`;
+        const res = await apiFetch(url, { method: 'DELETE' });
         if (res && res.ok) {
             wrap.style.opacity = '0';
             wrap.style.transform = 'translateX(20px)';
@@ -2327,14 +2415,30 @@ function buildHistoryCard(entry) {
 
 function initHistoryDrawer() {
     const openBtn  = document.getElementById('btn-open-history');
+    const shortsHistoryBtn = document.getElementById('btn-shorts-open-history');
     const drawer   = document.getElementById('history-drawer');
     const backdrop = document.getElementById('history-backdrop');
     const closeBtn = document.getElementById('history-drawer-close');
     const search   = document.getElementById('history-search');
 
-    if (!openBtn || !drawer) return;
+    if ((!openBtn && !shortsHistoryBtn) || !drawer) return;
 
     function openDrawer() {
+        if (this && this.id === 'btn-shorts-open-history') {
+            _historyMode = 'shorts';
+            document.querySelector('.history-drawer-title').textContent = '🎬 Shorts Video History';
+            document.querySelector('.history-drawer-sub').textContent = 'Every compiled short is saved locally.';
+            document.getElementById('history-search').placeholder = '🔍 Search by title...';
+            document.getElementById('history-empty').querySelector('.history-empty-icon').textContent = '🎬';
+            document.getElementById('history-empty').querySelector('.history-empty-msg').innerHTML = 'No short video generations yet.<br>Create a short and it will appear here.';
+        } else {
+            _historyMode = 'voice';
+            document.querySelector('.history-drawer-title').textContent = '📂 Generation History';
+            document.querySelector('.history-drawer-sub').textContent = 'Every generation is saved locally. Click a title to rename.';
+            document.getElementById('history-search').placeholder = '🔍 Search by title, voice...';
+            document.getElementById('history-empty').querySelector('.history-empty-icon').textContent = '🎤';
+            document.getElementById('history-empty').querySelector('.history-empty-msg').innerHTML = 'No generations yet.<br>Run a generation and it will appear here.';
+        }
         drawer.classList.remove('hidden');
         backdrop.classList.remove('hidden');
         loadHistory();
@@ -2349,7 +2453,8 @@ function initHistoryDrawer() {
         }
     }
 
-    openBtn.addEventListener('click', openDrawer);
+    if (openBtn) openBtn.addEventListener('click', openDrawer);
+    if (shortsHistoryBtn) shortsHistoryBtn.addEventListener('click', openDrawer);
     closeBtn.addEventListener('click', closeDrawer);
     backdrop.addEventListener('click', closeDrawer);
 
@@ -2517,3 +2622,411 @@ async function loadStats() {
         console.error('Stats load error:', err);
     }
 }
+
+
+// ── SHORTS AUTOMATION WORKFLOW SUBSYSTEM ──
+let shortsSseSource = null;
+
+async function initShortsCreator() {
+    // Populate voice picker for manual voice select in Shorts settings
+    const voicesData = await apiFetch('/api/voices');
+    if (voicesData && DOM.selectShortsDefaultVoice) {
+        DOM.selectShortsDefaultVoice.innerHTML = '';
+        voicesData.voices.forEach(voice => {
+            const opt = document.createElement('option');
+            opt.value = voice;
+            opt.textContent = KOKORO_VOICE_LABELS[voice] || (voice.charAt(0).toUpperCase() + voice.slice(1));
+            if (voice === 'am_adam') opt.selected = true; // default fallback
+            DOM.selectShortsDefaultVoice.appendChild(opt);
+        });
+    }
+
+    // Toggle Workspace Tabs
+    if (DOM.tabStudio && DOM.tabShorts) {
+        DOM.tabStudio.addEventListener('click', () => switchWorkspaceTab('studio'));
+        DOM.tabShorts.addEventListener('click', () => switchWorkspaceTab('shorts'));
+    }
+
+    // Setup input ranges event listeners
+    if (DOM.shortsDurationSlider) {
+        DOM.shortsDurationSlider.addEventListener('input', () => {
+            DOM.lblShortsDuration.textContent = DOM.shortsDurationSlider.value + 's';
+        });
+    }
+    
+    if (DOM.sliderShortsMusicVol) {
+        DOM.sliderShortsMusicVol.addEventListener('input', () => {
+            DOM.lblShortsMusicVol.textContent = DOM.sliderShortsMusicVol.value + '%';
+        });
+    }
+
+    if (DOM.checkShortsAutoVoice) {
+        DOM.checkShortsAutoVoice.addEventListener('change', () => {
+            if (DOM.groupShortsDefaultVoice) {
+                DOM.groupShortsDefaultVoice.style.display = DOM.checkShortsAutoVoice.checked ? 'none' : 'block';
+            }
+        });
+    }
+
+    if (DOM.checkShortsMusic) {
+        DOM.checkShortsMusic.addEventListener('change', () => {
+            if (DOM.groupShortsMusicDetails) {
+                DOM.groupShortsMusicDetails.style.display = DOM.checkShortsMusic.checked ? 'flex' : 'none';
+            }
+        });
+    }
+
+    if (DOM.checkShortsTransitions) {
+        DOM.checkShortsTransitions.addEventListener('change', () => {
+            if (DOM.groupShortsTransitionStyle) {
+                DOM.groupShortsTransitionStyle.style.display = DOM.checkShortsTransitions.checked ? 'block' : 'none';
+            }
+        });
+    }
+
+    if (DOM.selectShortsImageProvider) {
+        DOM.selectShortsImageProvider.addEventListener('change', () => {
+            const isStock = DOM.selectShortsImageProvider.value === 'stock';
+            const intervalGroup = document.getElementById('group-shorts-stock-interval');
+            if (intervalGroup) {
+                intervalGroup.style.display = isStock ? 'block' : 'none';
+            }
+        });
+    }
+
+    if (DOM.sliderShortsClipInterval) {
+        DOM.sliderShortsClipInterval.addEventListener('input', () => {
+            const val = parseInt(DOM.sliderShortsClipInterval.value);
+            DOM.lblShortsClipInterval.textContent = val === 0 ? 'off' : val + 's';
+        });
+    }
+
+    // Action Triggers
+    if (DOM.btnShortsGenerate) {
+        DOM.btnShortsGenerate.addEventListener('click', startShortsGeneration);
+    }
+    if (DOM.btnShortsCancel) {
+        DOM.btnShortsCancel.addEventListener('click', cancelShortsGeneration);
+    }
+    if (DOM.btnShortsClear) {
+        DOM.btnShortsClear.addEventListener('click', clearShortsGenerationState);
+    }
+
+    // Start listening to Shorts SSE events immediately on load to catch current tasks
+    connectShortsSSE();
+}
+
+function switchWorkspaceTab(tab) {
+    if (tab === 'studio') {
+        DOM.tabStudio.classList.add('active');
+        DOM.tabStudio.style.borderBottom = '3px solid var(--primary)';
+        DOM.tabStudio.style.opacity = '1';
+        DOM.tabStudio.style.color = '#fff';
+        
+        DOM.tabShorts.classList.remove('active');
+        DOM.tabShorts.style.borderBottom = '3px solid transparent';
+        DOM.tabShorts.style.opacity = '0.8';
+        DOM.tabShorts.style.color = 'rgba(255,255,255,0.5)';
+
+        DOM.shortsWorkspacePanel.classList.add('hidden');
+        DOM.workspaceHeader.classList.remove('hidden');
+        DOM.editorFrame.classList.remove('hidden');
+        DOM.tagShelf.classList.remove('hidden');
+        DOM.rightConsole.classList.remove('hidden');
+
+        DOM.cardShortsSettings.classList.add('hidden');
+        DOM.cardVoiceSettings.classList.remove('hidden');
+        DOM.cardEmotion.classList.remove('hidden');
+        DOM.cardAudioPipeline.classList.remove('hidden');
+        DOM.cardVideoOutput.classList.remove('hidden');
+    } else {
+        DOM.tabShorts.classList.add('active');
+        DOM.tabShorts.style.borderBottom = '3px solid var(--primary)';
+        DOM.tabShorts.style.opacity = '1';
+        DOM.tabShorts.style.color = '#fff';
+        
+        DOM.tabStudio.classList.remove('active');
+        DOM.tabStudio.style.borderBottom = '3px solid transparent';
+        DOM.tabStudio.style.opacity = '0.8';
+        DOM.tabStudio.style.color = 'rgba(255,255,255,0.5)';
+
+        DOM.shortsWorkspacePanel.classList.remove('hidden');
+        DOM.workspaceHeader.classList.add('hidden');
+        DOM.editorFrame.classList.add('hidden');
+        DOM.tagShelf.classList.add('hidden');
+        DOM.rightConsole.classList.add('hidden');
+
+        DOM.cardShortsSettings.classList.remove('hidden');
+        DOM.cardVoiceSettings.classList.add('hidden');
+        DOM.cardEmotion.classList.add('hidden');
+        DOM.cardAudioPipeline.classList.add('hidden');
+        DOM.cardVideoOutput.classList.add('hidden');
+    }
+}
+
+async function startShortsGeneration() {
+    clearShortsGenerationState();
+    const title = DOM.inputShortsTitle.value.trim();
+    if (!title) {
+        showToast('Please enter a video title or topic topic first.', 'err');
+        return;
+    }
+
+    DOM.btnShortsGenerate.disabled = true;
+    DOM.btnShortsGenerate.textContent = '⚙ Generating...';
+
+    const payload = {
+        title: title,
+        duration: parseInt(DOM.shortsDurationSlider.value),
+        style_preset: DOM.selectShortsStyle.value,
+        image_provider: DOM.selectShortsImageProvider.value,
+        music_enabled: DOM.checkShortsMusic.checked,
+        music_file: DOM.selectShortsMusicFile.value,
+        music_volume: parseFloat(DOM.sliderShortsMusicVol.value) / 100.0,
+        captions_enabled: DOM.checkShortsCaptions.checked,
+        transitions_enabled: DOM.checkShortsTransitions.checked,
+        transition_style: DOM.selectShortsTransitionStyle.value,
+        auto_voice: DOM.checkShortsAutoVoice.checked,
+        default_voice: DOM.selectShortsDefaultVoice.value,
+        clip_interval: parseInt(DOM.sliderShortsClipInterval.value)
+    };
+
+    try {
+        const res = await fetch('/api/shorts/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (!data.ok) {
+            showToast('Shorts generation failed to start: ' + (data.error || 'unknown'), 'err');
+            DOM.btnShortsGenerate.disabled = false;
+            DOM.btnShortsGenerate.textContent = '⚡ Generate Short Video';
+        } else {
+            showToast('Shorts pipeline started successfully!', 'ok');
+            DOM.shortsProgressCard.classList.remove('hidden');
+            DOM.shortsOutputCard.classList.add('hidden');
+            DOM.shortsPreviewCard.classList.add('hidden');
+        }
+    } catch (e) {
+        showToast('Network error starting shorts generation', 'err');
+        DOM.btnShortsGenerate.disabled = false;
+        DOM.btnShortsGenerate.textContent = '⚡ Generate Short Video';
+    }
+}
+
+async function cancelShortsGeneration() {
+    try {
+        const res = await fetch('/api/shorts/cancel', { method: 'POST' });
+        const data = await res.json();
+        if (data.ok) {
+            showToast('Shorts generation cancelled.', 'ok');
+        }
+    } catch (e) {
+        showToast('Error cancelling shorts process', 'err');
+    }
+}
+
+function connectShortsSSE() {
+    if (shortsSseSource) {
+        shortsSseSource.close();
+    }
+
+    shortsSseSource = new EventSource('/api/shorts/events');
+
+    shortsSseSource.addEventListener('progress', (e) => {
+        try {
+            const data = JSON.parse(e.data);
+            updateShortsProgressUI(data);
+        } catch (err) {
+            console.error('Error parsing shorts SSE data:', err);
+        }
+    });
+
+    shortsSseSource.onerror = (err) => {
+        console.error('Shorts SSE connection error. Reconnecting...', err);
+        setTimeout(connectShortsSSE, 5000);
+    };
+}
+
+function updateShortsProgressUI(data) {
+    if (data.running) {
+        DOM.btnShortsGenerate.disabled = true;
+        DOM.btnShortsGenerate.textContent = '⚙ Generation running...';
+        DOM.shortsProgressCard.classList.remove('hidden');
+    } else {
+        DOM.btnShortsGenerate.disabled = false;
+        DOM.btnShortsGenerate.textContent = '⚡ Generate Short Video';
+        // Hide progress if idle
+        if (data.status === 'idle') {
+            DOM.shortsProgressCard.classList.add('hidden');
+        }
+    }
+
+    // Map status strings to custom percentages
+    const statusMap = {
+        "idle": 0,
+        "generating_script": 5,
+        "voiced": 12,
+        "loading_tts": 15,
+        "generating_speech": 18,
+        "stitching_audio": 42,
+        "generating_images": 45,
+        "rendering_motion": 72,
+        "compiling_video": 88,
+        "mixing_music": 93,
+        "adding_subtitles": 96,
+        "final_mux": 98,
+        "done": 100,
+        "error": 0,
+        "cancelled": 0
+    };
+
+    let percent = statusMap[data.status] || 0;
+    
+    // Scale chunk counts for sub-processes
+    if (data.status === 'generating_speech' && data.total_chunks > 0) {
+        const step = 24 / data.total_chunks;
+        percent = Math.min(41, Math.round(18 + (data.current_chunk * step)));
+    } else if (data.status === 'generating_images' && data.total_chunks > 0) {
+        const step = 27 / data.total_chunks;
+        percent = Math.min(71, Math.round(45 + (data.current_chunk * step)));
+    } else if (data.status === 'rendering_motion' && data.total_chunks > 0) {
+        const step = 16 / data.total_chunks;
+        percent = Math.min(87, Math.round(72 + (data.current_chunk * step)));
+    }
+
+    if (DOM.shortsProgressBarFill) {
+        DOM.shortsProgressBarFill.style.width = percent + '%';
+    }
+    if (DOM.shortsProgressPercent) {
+        DOM.shortsProgressPercent.textContent = percent + '%';
+    }
+    
+    // Build human-friendly status label
+    let statusLabel = data.message || statusLabelText(data.status);
+    if (DOM.shortsProgressStatus) {
+        DOM.shortsProgressStatus.textContent = statusLabel;
+    }
+
+    // Populate script blueprint preview if available
+    if (data.script_draft && data.script_draft.segments) {
+        DOM.shortsPreviewCard.classList.remove('hidden');
+        DOM.shortsPreviewVoice.textContent = KOKORO_VOICE_LABELS[data.script_draft.recommended_voice] || data.script_draft.recommended_voice;
+        DOM.shortsPreviewTone.textContent = data.script_draft.tone_analysis || 'Dynamic';
+        
+        if (DOM.shortsPreviewStyle) {
+            DOM.shortsPreviewStyle.textContent = data.script_draft.recommended_style || 'Cinematic';
+        }
+        if (DOM.shortsPreviewTransition) {
+            DOM.shortsPreviewTransition.textContent = data.script_draft.recommended_transition || 'Crossfade';
+        }
+        if (DOM.shortsPreviewImgCount) {
+            DOM.shortsPreviewImgCount.textContent = data.script_draft.segments_count || data.script_draft.segments.length;
+        }
+        if (DOM.shortsPreviewCreationTip) {
+            DOM.shortsPreviewCreationTip.innerHTML = `💡 <strong>Director Tip:</strong> ${data.script_draft.creation_tip || 'Custom visual styling applied.'}`;
+        }
+
+        
+        // Render segments blueprint
+        DOM.shortsPreviewSegments.innerHTML = '';
+        data.script_draft.segments.forEach((seg, idx) => {
+            const segCard = document.createElement('div');
+            segCard.style = "background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.05); padding:10px 14px; border-radius:8px; display:flex; flex-direction:column; gap:4px; font-size:0.8rem;";
+            segCard.innerHTML = `
+                <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(255,255,255,0.03); padding-bottom:4px; margin-bottom:4px;">
+                    <span style="font-weight:600; color:var(--primary);">Scene #${idx + 1}</span>
+                    <span style="font-size:0.7rem; color:rgba(255,255,255,0.4); font-style:italic;">Transition: ${seg.transition}</span>
+                </div>
+                <div style="color:#fff; font-family:monospace; margin-bottom:4px;">"${seg.text}"</div>
+                <div style="color:rgba(255,255,255,0.5); font-size:0.72rem; line-height:1.2;">🎨 Prompt: ${seg.image_prompt}</div>
+            `;
+            DOM.shortsPreviewSegments.appendChild(segCard);
+        });
+    }
+
+    // Handle completed output state
+    if (data.status === 'done') {
+        DOM.shortsProgressCard.classList.add('hidden');
+        DOM.shortsOutputCard.classList.remove('hidden');
+        
+        const video = DOM.shortsPlayerNode;
+        if (video && (!video.src || video.src.includes('shorts/play') === false || percent === 100)) {
+            // Remove any existing tracks to prevent overlap
+            const existingTracks = video.querySelectorAll('track');
+            existingTracks.forEach(t => t.remove());
+            
+            // Build and attach a native HTML5 subtitle track element
+            const track = document.createElement('track');
+            track.kind = 'subtitles';
+            track.label = 'English';
+            track.srclang = 'en';
+            track.src = '/api/shorts/subtitles?t=' + Date.now();
+            track.default = true;
+            video.appendChild(track);
+
+            // Cache-bust to reload fresh output
+            video.src = '/api/shorts/play?t=' + Date.now();
+            video.load();
+        }
+        showToast('Short video completed successfully!', 'ok');
+    } else if (data.status === 'error') {
+        DOM.shortsProgressCard.classList.add('hidden');
+        showToast('Error during short generation: ' + (data.message || 'Check terminal logs'), 'err');
+    } else if (data.status === 'cancelled') {
+        DOM.shortsProgressCard.classList.add('hidden');
+        showToast('Shorts generation cancelled.', 'err');
+    }
+}
+
+
+function clearShortsGenerationState() {
+    // Clear preview blueprint card
+    if (DOM.shortsPreviewCard) {
+        DOM.shortsPreviewCard.classList.add('hidden');
+    }
+    const toneEl = document.getElementById('shorts-preview-tone');
+    const voiceEl = document.getElementById('shorts-preview-voice');
+    const styleEl = document.getElementById('shorts-preview-style');
+    const transEl = document.getElementById('shorts-preview-transition');
+    const countEl = document.getElementById('shorts-preview-imgcount');
+    const tipEl = document.getElementById('shorts-preview-creationtip');
+    
+    if (toneEl) toneEl.textContent = '--';
+    if (voiceEl) voiceEl.textContent = '--';
+    if (styleEl) styleEl.textContent = '--';
+    if (transEl) transEl.textContent = '--';
+    if (countEl) countEl.textContent = '--';
+    if (tipEl) tipEl.textContent = '';
+    
+    if (DOM.shortsPreviewSegments) {
+        DOM.shortsPreviewSegments.innerHTML = '';
+    }
+
+    // Clear player and output card
+    if (DOM.shortsOutputCard) {
+        DOM.shortsOutputCard.classList.add('hidden');
+    }
+    const video = DOM.shortsPlayerNode;
+    if (video) {
+        video.src = '';
+        const tracks = video.querySelectorAll('track');
+        tracks.forEach(t => t.remove());
+        try {
+            video.load();
+        } catch(e) {}
+    }
+
+    // Reset progress track
+    if (DOM.shortsProgressCard) {
+        DOM.shortsProgressCard.classList.add('hidden');
+    }
+    const fill = document.getElementById('shorts-progress-bar-fill');
+    const status = document.getElementById('shorts-progress-status');
+    const percent = document.getElementById('shorts-progress-percent');
+    if (fill) fill.style.width = '0%';
+    if (status) status.textContent = 'Initializing...';
+    if (percent) percent.textContent = '0%';
+}
+

@@ -114,3 +114,18 @@ VIDEO_CLIP_INTERVAL = 10
 # Review before merge: pause pipeline after all clips are found so you can
 # preview and replace clips before the final video is assembled.
 VIDEO_REVIEW_BEFORE_MERGE = True
+
+# ── Dynamic Shorts Pipeline Settings ─────────────────────────
+SHORTS_DURATION           = 60      # Dynamic video duration in seconds (can be changed in settings)
+SHORTS_RESOLUTION         = "1080x1920" # Standard 9:16 vertical resolution
+SHORTS_IMAGE_PROVIDER     = "flux" # "flux" (Flux HD), "turbo" (Fast SD), or "local" (Stable Diffusion MPS)
+SHORTS_STYLE_PRESET       = "cinematic" # Art style preset: cinematic, fantasy, realistic, anime, cyberpunk, sketch
+SHORTS_MUSIC_ENABLED      = True
+SHORTS_MUSIC_FILE         = "ref/bg_music.mp3" # Path to background music (falls back gracefully if missing)
+SHORTS_MUSIC_VOLUME       = 0.12    # Music loudness relative to voiceover
+SHORTS_CAPTIONS_ENABLED   = True
+SHORTS_TRANSITIONS_ENABLED = True
+SHORTS_TRANSITION_STYLE   = "crossfade" # xfade filter transitions (crossfade, fade, slideup, circlecrop, etc.)
+SHORTS_VOICE_AUTO_DETECT  = True    # Suggest the best voice automatically based on script sentiment
+SHORTS_VOICE_DEFAULT      = "am_adam" # Fallback voice if auto-detect is off or fails
+

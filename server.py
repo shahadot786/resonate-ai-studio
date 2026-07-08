@@ -52,6 +52,8 @@ _gen_state = {
 
 # Generation history archive directory
 ARCHIVE_DIR = Path("outputs/archive")
+SHORTS_ARCHIVE_DIR = Path("outputs/archive_shorts")
+SHORTS_ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _get_title_from_script(script_path: str) -> str:
@@ -142,6 +144,50 @@ _video_state = {
 
 # SSE subscribers for video progress
 _video_sse_subscribers: list[asyncio.Queue] = []
+
+# Shorts generation state
+_shorts_state = {
+    "running": False,
+    "status": "idle",
+    "message": "",
+    "current_chunk": 0,
+    "total_chunks": 0,
+    "output_file": None,
+    "script_draft": None,
+}
+
+_shorts_worker_process = None
+_shorts_worker_task = None
+_shorts_sse_subscribers: list[asyncio.Queue] = []
+
+
+def _broadcast_shorts(event: str, data: dict):
+    """Push an event to all shorts SSE subscribers."""
+    msg = f"event: {event}\ndata: {json.dumps(data)}\n\n"
+    dead = []
+    for queue in _shorts_sse_subscribers:
+        try:
+            queue.put_nowait(msg)
+        except Exception:
+            dead.append(queue)
+    for q in dead:
+        if q in _shorts_sse_subscribers:
+            _shorts_sse_subscribers.remove(q)
+
+
+def _update_shorts_state(**kwargs):
+    """Update shorts generation state and broadcast to SSE."""
+    _shorts_state.update(kwargs)
+    _broadcast_shorts("progress", {
+        "running":       _shorts_state["running"],
+        "status":        _shorts_state["status"],
+        "message":       _shorts_state["message"],
+        "current_chunk": _shorts_state["current_chunk"],
+        "total_chunks":  _shorts_state["total_chunks"],
+        "output_file":   _shorts_state["output_file"],
+        "script_draft":  _shorts_state["script_draft"],
+    })
+
 
 
 def _broadcast(event: str, data: dict):
@@ -961,6 +1007,74 @@ async def delete_history_entry(entry_id: str):
     return JSONResponse({"ok": False, "error": "Not found"}, 404)
 
 
+# ── Routes: Shorts History ──────────────────────────────────
+
+@app.get("/api/shorts/history")
+async def list_shorts_history():
+    """Return all archived shorts generations, newest first."""
+    entries = []
+    if SHORTS_ARCHIVE_DIR.exists():
+        for folder in sorted(SHORTS_ARCHIVE_DIR.iterdir(), reverse=True):
+            meta_path = folder / "meta.json"
+            if meta_path.exists():
+                try:
+                    meta = json.loads(meta_path.read_text())
+                    video_p = folder / "video.mp4"
+                    meta["video_exists"] = video_p.exists()
+                    meta["video_size"]   = video_p.stat().st_size if video_p.exists() else 0
+                    entries.append(meta)
+                except Exception:
+                    pass
+    return {"entries": entries}
+
+
+@app.patch("/api/shorts/history/{entry_id}")
+async def rename_shorts_history_entry(entry_id: str, request: Request):
+    """Rename a shorts history entry."""
+    data = await request.json()
+    new_title = data.get("title", "").strip()
+    if not new_title:
+        return JSONResponse({"ok": False, "error": "Title required"}, 400)
+    folder = SHORTS_ARCHIVE_DIR / entry_id
+    meta_path = folder / "meta.json"
+    if not meta_path.exists():
+        return JSONResponse({"ok": False, "error": "Not found"}, 404)
+    meta = json.loads(meta_path.read_text())
+    meta["title"] = new_title
+    meta_path.write_text(json.dumps(meta, indent=2))
+    return {"ok": True}
+
+
+@app.get("/api/shorts/history/{entry_id}/video")
+async def serve_shorts_history_video(entry_id: str):
+    """Stream the archived shorts video for a specific entry."""
+    path = SHORTS_ARCHIVE_DIR / entry_id / "video.mp4"
+    if path.exists():
+        return FileResponse(path, media_type="video/mp4", filename=f"{entry_id}.mp4")
+    return JSONResponse({"error": "Not found"}, 404)
+
+
+@app.get("/api/shorts/history/{entry_id}/subtitles")
+async def serve_shorts_history_subtitles(entry_id: str):
+    """Stream the archived VTT subtitles for a specific entry."""
+    path = SHORTS_ARCHIVE_DIR / entry_id / "subtitles.vtt"
+    if path.exists():
+        return FileResponse(path, media_type="text/vtt", filename=f"{entry_id}.vtt")
+    from fastapi import Response
+    return Response("WEBVTT\n\n", media_type="text/vtt")
+
+
+@app.delete("/api/shorts/history/{entry_id}")
+async def delete_shorts_history_entry(entry_id: str):
+    """Permanently delete a shorts history entry."""
+    folder = SHORTS_ARCHIVE_DIR / entry_id
+    if folder.exists() and folder.parent == SHORTS_ARCHIVE_DIR:
+        shutil.rmtree(folder)
+        return {"ok": True}
+    return JSONResponse({"ok": False, "error": "Not found"}, 404)
+
+
+
 # ── Routes: Video (B-Roll) ──────────────────────────────
 
 _video_worker_process = None
@@ -1563,7 +1677,273 @@ async def clear_video_outputs():
     return {"ok": True}
 
 
+# ── Automated Shorts Worker & Endpoints ─────────────────────────
+
+async def _run_shorts_worker(payload: dict):
+    global _shorts_worker_process
+    import sys
+    import shutil
+    from pathlib import Path
+
+    config_path = os.path.join("outputs", ".shorts_worker_config.json")
+    os.makedirs("outputs", exist_ok=True)
+
+    worker_cfg = {
+        "title":               payload.get("title", "Untitled Short"),
+        "duration":            payload.get("duration", config.SHORTS_DURATION),
+        "style_preset":        payload.get("style_preset", config.SHORTS_STYLE_PRESET),
+        "image_provider":      payload.get("image_provider", config.SHORTS_IMAGE_PROVIDER),
+        "music_enabled":       payload.get("music_enabled", config.SHORTS_MUSIC_ENABLED),
+        "music_file":          payload.get("music_file", config.SHORTS_MUSIC_FILE),
+        "music_volume":        payload.get("music_volume", config.SHORTS_MUSIC_VOLUME),
+        "captions_enabled":    payload.get("captions_enabled", config.SHORTS_CAPTIONS_ENABLED),
+        "transitions_enabled": payload.get("transitions_enabled", config.SHORTS_TRANSITIONS_ENABLED),
+        "transition_style":    payload.get("transition_style", config.SHORTS_TRANSITION_STYLE),
+        "auto_voice":          payload.get("auto_voice", config.SHORTS_VOICE_AUTO_DETECT),
+        "default_voice":       payload.get("default_voice", config.SHORTS_VOICE_DEFAULT),
+        "groq_keys":           getattr(config, "GROQ_API_KEYS", []),
+        "available_voices":    config.VOICES,
+        "model_path":          config.MODEL_PATH,
+        "pexels_api_key":      config.PEXELS_API_KEY,
+        "pixabay_api_key":     config.PIXABAY_API_KEY,
+        "coverr_api_key":      config.COVERR_API_KEY,
+        "clip_interval":       payload.get("clip_interval", 0.0),
+        "output_file":         "outputs/video/shorts_final.mp4"
+    }
+
+    with open(config_path, "w") as f:
+        json.dump(worker_cfg, f)
+
+    try:
+        python = sys.executable
+        _shorts_worker_process = await asyncio.create_subprocess_exec(
+            python, "core/shorts_worker.py", config_path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=None,  # let stderr flow to parent output
+            cwd=os.getcwd(),
+        )
+
+        while True:
+            line = await _shorts_worker_process.stdout.readline()
+            if not line:
+                break
+
+            line = line.decode("utf-8", errors="replace").strip()
+            if not line:
+                continue
+
+            try:
+                data = json.loads(line)
+                event = data.get("event", "")
+
+                if event == "status":
+                    _update_shorts_state(
+                        status=data.get("status", _shorts_state["status"]),
+                        message=data.get("message", _shorts_state["message"]),
+                        current_chunk=data.get("current", _shorts_state["current_chunk"]),
+                        total_chunks=data.get("total", _shorts_state["total_chunks"]),
+                    )
+                elif event == "script_ready":
+                    _update_shorts_state(
+                        status="voiced",
+                        message="Script generated! Voicing sentences...",
+                        script_draft=data,
+                    )
+                elif event == "done":
+                    _update_shorts_state(
+                        running=False,
+                        status="done",
+                        message=data.get("message", "Short ready!"),
+                        output_file="outputs/video/shorts_final.mp4",
+                    )
+                    # Automatically archive it so it shows in the History panel
+                    try:
+                        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                        history_folder = SHORTS_ARCHIVE_DIR / ts
+                        history_folder.mkdir(parents=True, exist_ok=True)
+                        
+                        # Copy the final shorts video and VTT subtitles track to its history folder
+                        shutil.copy2("outputs/video/shorts_final.mp4", history_folder / "video.mp4")
+                        if os.path.exists("outputs/video/shorts/subtitles.vtt"):
+                            shutil.copy2("outputs/video/shorts/subtitles.vtt", history_folder / "subtitles.vtt")
+                            
+                        # Save meta.json
+                        meta = {
+                            "id":        ts,
+                            "title":     payload.get("title", f"Short {ts}"),
+                            "created":   datetime.datetime.now().isoformat(),
+                            "has_video": True,
+                            "voice":     data.get("recommended_voice", "am_eric"),
+                            "style":     data.get("recommended_style", "cinematic"),
+                            "duration":  final_voiceover_duration
+                        }
+                        (history_folder / "meta.json").write_text(json.dumps(meta, indent=2))
+                    except Exception as ae:
+                        print(f"  ⚠ Failed to archive short to history: {ae}")
+
+                elif event == "error":
+                    _update_shorts_state(
+                        running=False,
+                        status="error",
+                        message=data.get("message", "Shorts generation failed"),
+                    )
+
+            except json.JSONDecodeError:
+                pass
+
+        await _shorts_worker_process.wait()
+
+        if _shorts_worker_process.returncode != 0 and _shorts_state["status"] not in ("done", "error", "cancelled"):
+            _update_shorts_state(
+                running=False,
+                status="error",
+                message="Shorts worker process crashed or exited with error.",
+            )
+
+    except asyncio.CancelledError:
+        if _shorts_worker_process and _shorts_worker_process.returncode is None:
+            try:
+                _shorts_worker_process.terminate()
+            except ProcessLookupError:
+                pass
+            await _shorts_worker_process.wait()
+        _update_shorts_state(running=False, status="cancelled", message="Shorts generation cancelled")
+
+    except Exception as e:
+        _update_shorts_state(running=False, status="error", message=str(e))
+
+    finally:
+        _shorts_worker_process = None
+        if os.path.exists(config_path):
+            os.remove(config_path)
+        _update_shorts_state(running=False)
+
+
+@app.post("/api/shorts/generate")
+async def generate_shorts(request: Request):
+    global _shorts_worker_task
+
+    if _shorts_state["running"]:
+        return JSONResponse({"ok": False, "error": "Shorts generation already in progress"}, 409)
+
+    payload = await request.json()
+
+    # Clean previous output
+    out_vid = "outputs/video/shorts_final.mp4"
+    if os.path.exists(out_vid):
+        try:
+            os.remove(out_vid)
+        except Exception:
+            pass
+
+    _shorts_state.update(
+        running=True,
+        status="generating_script",
+        message="Starting shorts generation worker...",
+        current_chunk=0,
+        total_chunks=0,
+        output_file=None,
+        script_draft=None,
+    )
+
+    _shorts_worker_task = asyncio.create_task(_run_shorts_worker(payload))
+    return {"ok": True}
+
+
+@app.post("/api/shorts/cancel")
+async def cancel_shorts():
+    global _shorts_worker_task, _shorts_worker_process
+
+    if not _shorts_state["running"]:
+        return {"ok": False, "message": "No process running"}
+
+    if _shorts_worker_task and not _shorts_worker_task.done():
+        _shorts_worker_task.cancel()
+
+    if _shorts_worker_process and _shorts_worker_process.returncode is None:
+        try:
+            _shorts_worker_process.terminate()
+        except ProcessLookupError:
+            pass
+
+    _update_shorts_state(running=False, status="cancelled", message="Shorts generation cancelled by user")
+    return {"ok": True}
+
+
+@app.get("/api/shorts/status")
+async def get_shorts_status():
+    return _shorts_state
+
+
+@app.get("/api/shorts/events")
+async def shorts_events(request: Request):
+    queue = asyncio.Queue()
+    _shorts_sse_subscribers.append(queue)
+
+    async def event_stream():
+        snapshot = {
+            "running":       _shorts_state["running"],
+            "status":        _shorts_state["status"],
+            "message":       _shorts_state["message"],
+            "current_chunk": _shorts_state["current_chunk"],
+            "total_chunks":  _shorts_state["total_chunks"],
+            "output_file":   _shorts_state["output_file"],
+            "script_draft":  _shorts_state["script_draft"],
+        }
+        yield f"event: progress\ndata: {json.dumps(snapshot)}\n\n"
+
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    msg = await asyncio.wait_for(queue.get(), timeout=15.0)
+                    yield msg
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+        finally:
+            if queue in _shorts_sse_subscribers:
+                _shorts_sse_subscribers.remove(queue)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection":    "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+
+@app.get("/api/shorts/play")
+async def play_shorts():
+    out_vid = "outputs/video/shorts_final.mp4"
+    if not os.path.exists(out_vid):
+        return JSONResponse({"ok": False, "error": "Shorts video not found"}, 404)
+    return FileResponse(out_vid, media_type="video/mp4")
+
+
+@app.get("/api/shorts/download")
+async def download_shorts():
+    out_vid = "outputs/video/shorts_final.mp4"
+    if not os.path.exists(out_vid):
+        return JSONResponse({"ok": False, "error": "Shorts video not found"}, 404)
+    return FileResponse(out_vid, media_type="video/mp4", filename="shorts_video.mp4")
+
+
+@app.get("/api/shorts/subtitles")
+async def get_shorts_subtitles():
+    from fastapi import Response
+    vtt_path = "outputs/video/shorts/subtitles.vtt"
+    if not os.path.exists(vtt_path):
+        return Response("WEBVTT\n\n", media_type="text/vtt")
+    return FileResponse(vtt_path, media_type="text/vtt")
+
+
+
 # ── Main ─────────────────────────────────────────────────────
+
 
 if __name__ == "__main__":
     print(f"\n  🎙️  Resonate Dashboard → http://{config.SERVER_HOST}:{config.SERVER_PORT}\n")
