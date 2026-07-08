@@ -204,12 +204,15 @@
 
             <!-- Script Toolbar -->
             <div class="workspace-header">
-                <div class="toolbar-brand">
-                    <h2>Script</h2>
-                    <span class="stats-badge" id="chunk-counter">0 Chunks</span>
-                    <span class="stats-text" id="word-counter">0 words</span>
+                <div class="toolbar-brand" style="display:flex; align-items:center; gap:16px;">
+                    <div class="workspace-tabs" style="display:flex; gap:6px; background:rgba(0,0,0,0.3); padding:4px; border-radius:8px; border:1px solid rgba(255,255,255,0.15);">
+                        <button class="tab-btn active" id="tab-studio" style="padding:6px 12px; border-radius:6px; border:none; background:var(--primary); color:#fff; font-size:0.85rem; font-weight:600; cursor:pointer; transition:all 0.2s;">🎙 Voice Studio</button>
+                        <button class="tab-btn" id="tab-highlights" style="padding:6px 12px; border-radius:6px; border:none; background:transparent; color:rgba(255,255,255,0.6); font-size:0.85rem; font-weight:600; cursor:pointer; transition:all 0.2s;">🎬 Long to Shorts</button>
+                    </div>
+                    <span class="stats-badge id-studio-meta" id="chunk-counter">0 Chunks</span>
+                    <span class="stats-text id-studio-meta" id="word-counter">0 words</span>
                 </div>
-                <div class="toolbar-actions">
+                <div class="toolbar-actions id-studio-actions">
                     <button class="btn btn-primary hidden" id="btn-open-review-drawer-toolbar" title="Review B-Roll Clips" style="background: rgba(124, 157, 255, 0.15); border-color: #7c9dff; color: #7c9dff; display: inline-flex; align-items: center; gap: 6px; font-weight: 600;">🎞 Review Clips</button>
                     <button class="btn btn-secondary" id="btn-open-stats" title="View Pipeline Statistics" style="display: inline-flex; align-items: center; gap: 6px; margin-right: 8px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.15); color: #fff;">📊 Stats</button>
                     <button class="btn btn-history" id="btn-open-history" title="Generation History">📂 History <span class="history-count-badge" id="history-count-badge"></span></button>
@@ -217,62 +220,178 @@
                 </div>
             </div>
 
-            <!-- Script Textarea -->
-            <div class="editor-frame">
-                <div class="editor-line-gutter" id="gutter"></div>
-                <textarea id="script-textarea" spellcheck="false"
-                    placeholder="Begin writing your storytelling script here...&#10;&#10;Key Rules:&#10;- One line of text = one speech segment.&#10;- Paragraph breaks are skipped.&#10;- Inline overrides:&#10;  [voice:af_heart] [emotion:Whispered, fearful] The shadow loomed closer.&#10;  [voice:am_adam] [emotion:Quiet Rage] I walked away."></textarea>
+            <!-- Studio Workspace Content -->
+            <div id="studio-workspace-content" style="display:flex; flex-direction:column; flex:1; overflow:hidden;">
+                <!-- Script Textarea -->
+                <div class="editor-frame">
+                    <div class="editor-line-gutter" id="gutter"></div>
+                    <textarea id="script-textarea" spellcheck="false"
+                        placeholder="Begin writing your storytelling script here...&#10;&#10;Key Rules:&#10;- One line of text = one speech segment.&#10;- Paragraph breaks are skipped.&#10;- Inline overrides:&#10;  [voice:af_heart] [emotion:Whispered, fearful] The shadow loomed closer.&#10;  [voice:am_adam] [emotion:Quiet Rage] I walked away."></textarea>
+                </div>
+
+                <!-- Tag Injector Shelf -->
+                <div class="tag-shelf">
+                    <div class="tag-group">
+                        <span class="shelf-label">US Female:</span>
+                        <button class="tag-insert" data-tag="[voice:af_sarah]">Sarah</button>
+                        <button class="tag-insert" data-tag="[voice:af_bella]">Bella</button>
+                        <button class="tag-insert" data-tag="[voice:af_heart]">Heart</button>
+                        <button class="tag-insert" data-tag="[voice:af_nicole]">Nicole</button>
+                        <button class="tag-insert" data-tag="[voice:af_sky]">Sky</button>
+                        <button class="tag-insert" data-tag="[voice:af_alloy]">Alloy</button>
+                        <button class="tag-insert" data-tag="[voice:af_aoede]">Aoede</button>
+                        <button class="tag-insert" data-tag="[voice:af_jessica]">Jessica</button>
+                        <button class="tag-insert" data-tag="[voice:af_kore]">Kore</button>
+                        <button class="tag-insert" data-tag="[voice:af_nova]">Nova</button>
+                        <button class="tag-insert" data-tag="[voice:af_river]">River</button>
+                    </div>
+                    <div class="tag-group">
+                        <span class="shelf-label">US Male:</span>
+                        <button class="tag-insert" data-tag="[voice:am_adam]">Adam</button>
+                        <button class="tag-insert" data-tag="[voice:am_michael]">Michael</button>
+                        <button class="tag-insert" data-tag="[voice:am_fenrir]">Fenrir</button>
+                        <button class="tag-insert" data-tag="[voice:am_puck]">Puck</button>
+                        <button class="tag-insert" data-tag="[voice:am_echo]">Echo</button>
+                        <button class="tag-insert" data-tag="[voice:am_eric]">Eric</button>
+                        <button class="tag-insert" data-tag="[voice:am_liam]">Liam</button>
+                        <button class="tag-insert" data-tag="[voice:am_onyx]">Onyx</button>
+                        <button class="tag-insert" data-tag="[voice:am_santa]">Santa</button>
+                    </div>
+                    <div class="tag-group">
+                        <span class="shelf-label">UK:</span>
+                        <button class="tag-insert" data-tag="[voice:bf_alice]">Alice</button>
+                        <button class="tag-insert" data-tag="[voice:bf_emma]">Emma</button>
+                        <button class="tag-insert" data-tag="[voice:bf_isabella]">Isabella</button>
+                        <button class="tag-insert" data-tag="[voice:bf_lily]">Lily</button>
+                        <button class="tag-insert" data-tag="[voice:bm_daniel]">Daniel</button>
+                        <button class="tag-insert" data-tag="[voice:bm_fable]">Fable</button>
+                        <button class="tag-insert" data-tag="[voice:bm_george]">George</button>
+                        <button class="tag-insert" data-tag="[voice:bm_lewis]">Lewis</button>
+                    </div>
+                    <div class="tag-group">
+                        <span class="shelf-label">Emotions:</span>
+                        <button class="tag-insert" data-tag="[emotion:Simmering Anger]">Anger</button>
+                        <button class="tag-insert" data-tag="[emotion:Cinematic Narrative]">Cinematic</button>
+                        <button class="tag-insert" data-tag="[emotion:Whispered Suspense]">Whisper</button>
+                        <button class="tag-insert" data-tag="[emotion:Cold Precision]">Cold</button>
+                        <button class="tag-insert" data-tag="[emotion:Raw Vulnerability]">Sorrow</button>
+                        <button class="tag-insert" data-tag="[emotion:Urgent Excitement]">Excited</button>
+                        <button class="tag-insert" data-tag="[emotion:Empowered Resolution]">Resolute</button>
+                        <button class="tag-insert" data-tag="[emotion:Bitter Sarcasm]">Sarcastic</button>
+                    </div>
+                </div>
             </div>
 
-            <!-- Tag Injector Shelf -->
-            <div class="tag-shelf">
-                <div class="tag-group">
-                    <span class="shelf-label">US Female:</span>
-                    <button class="tag-insert" data-tag="[voice:af_sarah]">Sarah</button>
-                    <button class="tag-insert" data-tag="[voice:af_bella]">Bella</button>
-                    <button class="tag-insert" data-tag="[voice:af_heart]">Heart</button>
-                    <button class="tag-insert" data-tag="[voice:af_nicole]">Nicole</button>
-                    <button class="tag-insert" data-tag="[voice:af_sky]">Sky</button>
-                    <button class="tag-insert" data-tag="[voice:af_alloy]">Alloy</button>
-                    <button class="tag-insert" data-tag="[voice:af_aoede]">Aoede</button>
-                    <button class="tag-insert" data-tag="[voice:af_jessica]">Jessica</button>
-                    <button class="tag-insert" data-tag="[voice:af_kore]">Kore</button>
-                    <button class="tag-insert" data-tag="[voice:af_nova]">Nova</button>
-                    <button class="tag-insert" data-tag="[voice:af_river]">River</button>
-                </div>
-                <div class="tag-group">
-                    <span class="shelf-label">US Male:</span>
-                    <button class="tag-insert" data-tag="[voice:am_adam]">Adam</button>
-                    <button class="tag-insert" data-tag="[voice:am_michael]">Michael</button>
-                    <button class="tag-insert" data-tag="[voice:am_fenrir]">Fenrir</button>
-                    <button class="tag-insert" data-tag="[voice:am_puck]">Puck</button>
-                    <button class="tag-insert" data-tag="[voice:am_echo]">Echo</button>
-                    <button class="tag-insert" data-tag="[voice:am_eric]">Eric</button>
-                    <button class="tag-insert" data-tag="[voice:am_liam]">Liam</button>
-                    <button class="tag-insert" data-tag="[voice:am_onyx]">Onyx</button>
-                    <button class="tag-insert" data-tag="[voice:am_santa]">Santa</button>
-                </div>
-                <div class="tag-group">
-                    <span class="shelf-label">UK:</span>
-                    <button class="tag-insert" data-tag="[voice:bf_alice]">Alice</button>
-                    <button class="tag-insert" data-tag="[voice:bf_emma]">Emma</button>
-                    <button class="tag-insert" data-tag="[voice:bf_isabella]">Isabella</button>
-                    <button class="tag-insert" data-tag="[voice:bf_lily]">Lily</button>
-                    <button class="tag-insert" data-tag="[voice:bm_daniel]">Daniel</button>
-                    <button class="tag-insert" data-tag="[voice:bm_fable]">Fable</button>
-                    <button class="tag-insert" data-tag="[voice:bm_george]">George</button>
-                    <button class="tag-insert" data-tag="[voice:bm_lewis]">Lewis</button>
-                </div>
-                <div class="tag-group">
-                    <span class="shelf-label">Emotions:</span>
-                    <button class="tag-insert" data-tag="[emotion:Simmering Anger]">Anger</button>
-                    <button class="tag-insert" data-tag="[emotion:Cinematic Narrative]">Cinematic</button>
-                    <button class="tag-insert" data-tag="[emotion:Whispered Suspense]">Whisper</button>
-                    <button class="tag-insert" data-tag="[emotion:Cold Precision]">Cold</button>
-                    <button class="tag-insert" data-tag="[emotion:Raw Vulnerability]">Sorrow</button>
-                    <button class="tag-insert" data-tag="[emotion:Urgent Excitement]">Excited</button>
-                    <button class="tag-insert" data-tag="[emotion:Empowered Resolution]">Resolute</button>
-                    <button class="tag-insert" data-tag="[emotion:Bitter Sarcasm]">Sarcastic</button>
+            <!-- Highlights Workspace Content -->
+            <div id="highlights-workspace-content" style="display:none; padding:30px; height:calc(100vh - 70px); overflow-y:auto;">
+                <div class="highlights-grid" style="display:grid; grid-template-columns: 4fr 6fr; gap:30px; max-width:1200px; margin:0 auto;">
+                    
+                    <!-- Left Column: Upload & Setup -->
+                    <div class="highlights-left-pane" style="display:flex; flex-direction:column; gap:24px;">
+                        <div class="sidebar-card" style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:12px; padding:24px; box-shadow:0 8px 32px rgba(0,0,0,0.2);">
+                            <div class="card-headline" style="font-size:1.1rem; font-weight:700; margin-bottom:16px; color:#fff; display:flex; align-items:center; gap:8px;">
+                                <span>🎬 Upload Video</span>
+                            </div>
+                            
+                            <!-- Drag & Drop Upload Zone -->
+                            <div id="highlights-upload-zone" style="border: 2px dashed rgba(255,255,255,0.15); border-radius:12px; padding:40px 20px; text-align:center; cursor:pointer; background:rgba(0,0,0,0.15); transition:all 0.2s;">
+                                <div style="font-size:2.5rem; margin-bottom:12px;">📤</div>
+                                <div style="font-weight:600; font-size:0.95rem; margin-bottom:6px; color:#fff;">Drag & drop your video here</div>
+                                <div style="font-size:0.75rem; color:rgba(255,255,255,0.45); margin-bottom:16px;">Supports MP4, MOV, MKV up to 200MB</div>
+                                
+                                <input type="file" id="highlights-file-input" accept="video/*" style="display:none;">
+                                <button class="btn btn-secondary" onclick="document.getElementById('highlights-file-input').click()" style="background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.15); color:#fff; font-size:0.8rem; padding:6px 16px;">Browse File</button>
+                            </div>
+                            
+                            <!-- Upload Progress -->
+                            <div id="highlights-upload-progress-container" style="display:none; margin-top:16px;">
+                                <div style="display:flex; justify-content:space-between; font-size:0.8rem; margin-bottom:6px; color:rgba(255,255,255,0.7);">
+                                    <span id="highlights-upload-status-text">Uploading video...</span>
+                                    <span id="highlights-upload-percentage">0%</span>
+                                </div>
+                                <div style="height:6px; background:rgba(255,255,255,0.1); border-radius:3px; overflow:hidden;">
+                                    <div id="highlights-upload-progress-bar" style="width:0%; height:100%; background:var(--primary); transition:width 0.1s;"></div>
+                                </div>
+                            </div>
+
+                            <!-- Upload File Info -->
+                            <div id="highlights-file-info" style="display:none; margin-top:16px; background:rgba(255,255,255,0.05); padding:12px; border-radius:8px; border:1px solid rgba(255,255,255,0.08); align-items:center; justify-content:space-between;">
+                                <div style="display:flex; align-items:center; gap:10px; overflow:hidden;">
+                                    <span style="font-size:1.5rem;">🎞</span>
+                                    <div style="overflow:hidden;">
+                                        <div id="highlights-filename" style="font-size:0.85rem; font-weight:600; color:#fff; white-space:nowrap; text-overflow:ellipsis; overflow:hidden;">video.mp4</div>
+                                        <div id="highlights-filesize" style="font-size:0.7rem; color:rgba(255,255,255,0.4);">0.0 MB</div>
+                                    </div>
+                                </div>
+                                <button class="btn btn-icon" id="btn-remove-highlight-video" title="Remove video" style="background:transparent; border:none; color:rgba(255,255,255,0.4); cursor:pointer;">✕</button>
+                            </div>
+                        </div>
+
+                        <!-- Extract Settings -->
+                        <div id="highlights-settings-card" class="sidebar-card" style="display:none; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:12px; padding:24px; box-shadow:0 8px 32px rgba(0,0,0,0.2);">
+                            <div class="card-headline" style="font-size:1.1rem; font-weight:700; margin-bottom:16px; color:#fff;">⚙ Extraction Settings</div>
+                            
+                            <div class="control-group" style="margin-bottom:20px;">
+                                <label for="highlights-clip-count" style="display:flex; justify-content:space-between; font-size:0.85rem; font-weight:600; margin-bottom:8px; color:rgba(255,255,255,0.85);">
+                                    <span>Target Clip Count</span>
+                                    <span id="lbl-highlights-clip-count" style="color:var(--primary); font-weight:700;">3 clips</span>
+                                </label>
+                                <input type="range" id="highlights-clip-count" min="1" max="5" step="1" value="3" style="width:100%;">
+                                <div style="font-size:0.7rem; color:rgba(255,255,255,0.4); margin-top:6px;">Select how many high-engagement highlight clips to extract.</div>
+                            </div>
+
+                            <div class="control-group" style="margin-bottom:20px;">
+                                <label for="highlights-clip-duration" style="display:flex; justify-content:space-between; font-size:0.85rem; font-weight:600; margin-bottom:8px; color:rgba(255,255,255,0.85);">
+                                    <span>Target Clip Duration (seconds) <span style="color:#ff4a4a;">*</span></span>
+                                </label>
+                                <input type="number" id="highlights-clip-duration" min="15" max="60" value="30" required style="width:100%; box-sizing:border-box; padding:10px; background:rgba(0,0,0,0.25); border:1px solid rgba(255,255,255,0.15); border-radius:6px; color:#fff; font-size:0.85rem;">
+                                <div style="font-size:0.7rem; color:rgba(255,255,255,0.4); margin-top:6px;">Specify target length (15s to 60s). The engine will find conversational bounds closest to this duration.</div>
+                            </div>
+
+                            <button class="btn btn-primary" id="btn-extract-highlights" style="width:100%; padding:12px; border-radius:8px; font-weight:600; font-size:0.95rem; background:var(--primary); border:none; color:#fff; cursor:pointer; box-shadow:0 4px 15px rgba(var(--primary-rgb), 0.3);">⚡ Extract Viral Highlights</button>
+                        </div>
+                    </div>
+
+                    <!-- Right Column: Status & Output clips -->
+                    <div class="highlights-right-pane" style="display:flex; flex-direction:column; gap:24px;">
+                        
+                        <!-- Live Status Tracking -->
+                        <div id="highlights-status-card" class="sidebar-card" style="display:none; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:12px; padding:24px;">
+                            <div class="card-headline" style="font-size:1.1rem; font-weight:700; margin-bottom:12px; color:#fff; display:flex; align-items:center; gap:8px;">
+                                <span class="pulsing-red-dot"></span>
+                                <span>Extraction Progress</span>
+                            </div>
+                            
+                            <div class="console-progress" style="background:transparent; padding:0; border:none; margin:10px 0;">
+                                <div class="progress-track" style="height:8px; background:rgba(255,255,255,0.08); border-radius:4px; overflow:hidden; margin-bottom:12px;">
+                                    <div class="progress-bar-fill" id="highlights-progress-fill" style="width: 0%; height: 100%; background:var(--primary); transition:width 0.3s;"></div>
+                                </div>
+                                <div style="display:flex; justify-content:space-between; align-items:center;">
+                                    <span id="highlights-status-msg" style="font-size:0.85rem; color:#fff; font-weight:500;">Initializing...</span>
+                                    <span id="highlights-status-detail" style="font-size:0.75rem; color:rgba(255,255,255,0.4);">Scene 0/0</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Generated clips list -->
+                        <div class="sidebar-card" style="flex:1; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:12px; padding:24px; display:flex; flex-direction:column; min-height:400px;">
+                            <div class="card-headline" style="font-size:1.1rem; font-weight:700; margin-bottom:16px; color:#fff; display:flex; justify-content:space-between; align-items:center;">
+                                <span>🎬 Generated Highlights</span>
+                                <span style="font-size:0.75rem; color:rgba(255,255,255,0.45); font-weight:normal;" id="highlights-count-lbl">0 clips saved locally</span>
+                            </div>
+                            
+                            <div id="highlights-empty-state" style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:40px; color:rgba(255,255,255,0.35);">
+                                <div style="font-size:3rem; margin-bottom:16px;">🎬</div>
+                                <div style="font-weight:600; font-size:0.95rem; margin-bottom:6px;">No Highlights Yet</div>
+                                <div style="font-size:0.8rem; max-width:280px; line-height:1.4;">Upload a video and start extraction to generate viral highlights locally.</div>
+                            </div>
+
+                            <!-- Clips Grid -->
+                            <div id="highlights-clips-grid" class="highlights-clips-grid" style="display:none; flex-direction:column; gap:16px; overflow-y:auto; flex:1;">
+                                <!-- Dynamically populated card rows -->
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
 

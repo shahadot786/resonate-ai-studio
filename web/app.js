@@ -71,6 +71,34 @@ const DOM = {
     // Audio Output Nodes
     audioMainNode:    $('#audio-main-node'),
     audioRefNode:     $('#audio-ref-node'),
+    
+    // Highlights Workspace elements
+    tabStudio:                  $('#tab-studio'),
+    tabHighlights:              $('#tab-highlights'),
+    studioWorkspaceContent:     $('#studio-workspace-content'),
+    highlightsWorkspaceContent: $('#highlights-workspace-content'),
+    highlightsUploadZone:       $('#highlights-upload-zone'),
+    highlightsFileInput:        $('#highlights-file-input'),
+    highlightsUploadProgressContainer: $('#highlights-upload-progress-container'),
+    highlightsUploadStatusText: $('#highlights-upload-status-text'),
+    highlightsUploadPercentage: $('#highlights-upload-percentage'),
+    highlightsUploadProgressBar: $('#highlights-upload-progress-bar'),
+    highlightsFileInfo:         $('#highlights-file-info'),
+    highlightsFilename:         $('#highlights-filename'),
+    highlightsFilesize:         $('#highlights-filesize'),
+    btnRemoveHighlightVideo:    $('#btn-remove-highlight-video'),
+    highlightsSettingsCard:     $('#highlights-settings-card'),
+    highlightsClipCountSlider:  $('#highlights-clip-count'),
+    lblHighlightsClipCount:     $('#lbl-highlights-clip-count'),
+    highlightsClipDurationInput: $('#highlights-clip-duration'),
+    btnExtractHighlights:       $('#btn-extract-highlights'),
+    highlightsStatusCard:       $('#highlights-status-card'),
+    highlightsProgressFill:     $('#highlights-progress-fill'),
+    highlightsStatusMsg:        $('#highlights-status-msg'),
+    highlightsStatusDetail:     $('#highlights-status-detail'),
+    highlightsCountLbl:         $('#highlights-count-lbl'),
+    highlightsEmptyState:       $('#highlights-empty-state'),
+    highlightsClipsGrid:        $('#highlights-clips-grid'),
 };
 
 let activePlayingChunk = null;
@@ -804,6 +832,62 @@ function showToast(message, type = '') {
 
 // ── EVENT ROUTERS & EVENT LISTENER MAPS ──
 function setupEventListeners() {
+    // Workspace tabs switching listeners
+    if (DOM.tabStudio && DOM.tabHighlights) {
+        DOM.tabStudio.addEventListener('click', () => switchWorkspaceTab('studio'));
+        DOM.tabHighlights.addEventListener('click', () => switchWorkspaceTab('highlights'));
+    }
+
+    // Highlights target clip count slider label
+    if (DOM.highlightsClipCountSlider) {
+        DOM.highlightsClipCountSlider.addEventListener('input', () => {
+            DOM.lblHighlightsClipCount.textContent = DOM.highlightsClipCountSlider.value + ' clips';
+        });
+    }
+
+    // Drag-over styling & dropping
+    if (DOM.highlightsUploadZone) {
+        ['dragenter', 'dragover'].forEach(eventName => {
+            DOM.highlightsUploadZone.addEventListener(eventName, (e) => {
+                e.preventDefault();
+                DOM.highlightsUploadZone.classList.add('dragover');
+            }, false);
+        });
+
+        ['dragleave', 'drop'].forEach(eventName => {
+            DOM.highlightsUploadZone.addEventListener(eventName, (e) => {
+                e.preventDefault();
+                DOM.highlightsUploadZone.classList.remove('dragover');
+            }, false);
+        });
+
+        DOM.highlightsUploadZone.addEventListener('drop', (e) => {
+            const dt = e.dataTransfer;
+            const files = dt.files;
+            if (files && files.length > 0) {
+                handleHighlightsFileUpload(files[0]);
+            }
+        });
+    }
+
+    if (DOM.highlightsFileInput) {
+        DOM.highlightsFileInput.addEventListener('change', (e) => {
+            if (e.target.files && e.target.files.length > 0) {
+                handleHighlightsFileUpload(e.target.files[0]);
+            }
+        });
+    }
+
+    if (DOM.btnRemoveHighlightVideo) {
+        DOM.btnRemoveHighlightVideo.addEventListener('click', () => {
+            resetHighlightsUploadState();
+        });
+    }
+
+    if (DOM.btnExtractHighlights) {
+        DOM.btnExtractHighlights.addEventListener('click', triggerHighlightsExtraction);
+    }
+
     // Save hotkey trigger
     DOM.btnSaveScript.addEventListener('click', () => saveScriptData(false));
     document.addEventListener('keydown', (e) => {
@@ -2517,3 +2601,306 @@ async function loadStats() {
         console.error('Stats load error:', err);
     }
 }
+
+
+// ── Highlights Workspace Switcher ──
+function switchWorkspaceTab(mode) {
+    const layout = document.getElementById('app-layout');
+    if (!layout) return;
+
+    if (mode === 'studio') {
+        DOM.tabStudio.classList.add('active');
+        DOM.tabStudio.style.background = 'var(--primary)';
+        DOM.tabStudio.style.color = '#fff';
+        DOM.tabHighlights.classList.remove('active');
+        DOM.tabHighlights.style.background = 'transparent';
+        DOM.tabHighlights.style.color = 'rgba(255,255,255,0.6)';
+        
+        layout.classList.remove('highlights-mode');
+        DOM.studioWorkspaceContent.style.display = 'flex';
+        DOM.highlightsWorkspaceContent.style.display = 'none';
+        
+        // Show studio-only header metadata
+        $$('.id-studio-meta').forEach(el => el.style.display = 'inline-block');
+        $$('.id-studio-actions').forEach(el => el.style.display = 'flex');
+    } else {
+        DOM.tabHighlights.classList.add('active');
+        DOM.tabHighlights.style.background = 'var(--primary)';
+        DOM.tabHighlights.style.color = '#fff';
+        DOM.tabStudio.classList.remove('active');
+        DOM.tabStudio.style.background = 'transparent';
+        DOM.tabStudio.style.color = 'rgba(255,255,255,0.6)';
+        
+        layout.classList.add('highlights-mode');
+        DOM.studioWorkspaceContent.style.display = 'none';
+        DOM.highlightsWorkspaceContent.style.display = 'block';
+        
+        // Hide studio-only header metadata
+        $$('.id-studio-meta').forEach(el => el.style.display = 'none');
+        $$('.id-studio-actions').forEach(el => el.style.display = 'none');
+        
+        // Load existing highlights
+        refreshHighlightsList();
+        
+        // Connect SSE if it was running
+        connectHighlightsSSE();
+    }
+}
+
+// ── Upload & Progression Controllers ──
+let uploadedVideoName = "";
+
+function handleHighlightsFileUpload(file) {
+    if (!file.type.startsWith('video/')) {
+        showToast('Please upload a valid video file.', 'err');
+        return;
+    }
+
+    const maxBytes = 200 * 1024 * 1024;
+    if (file.size > maxBytes) {
+        showToast('File size is too large. Max limit is 200MB.', 'err');
+        return;
+    }
+    
+    // Switch states
+    DOM.highlightsUploadZone.style.display = 'none';
+    DOM.highlightsUploadProgressContainer.style.display = 'block';
+    DOM.highlightsUploadStatusText.textContent = "Uploading video...";
+    DOM.highlightsUploadPercentage.textContent = "0%";
+    DOM.highlightsUploadProgressBar.style.width = "0%";
+    DOM.highlightsFileInfo.style.display = 'none';
+    DOM.highlightsSettingsCard.style.display = 'none';
+    
+    const formData = new FormData();
+    formData.append('file', file);
+    
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/highlights/upload', true);
+    
+    xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+            const pct = Math.round((e.loaded / e.total) * 100);
+            DOM.highlightsUploadPercentage.textContent = pct + "%";
+            DOM.highlightsUploadProgressBar.style.width = pct + "%";
+        }
+    };
+    
+    xhr.onload = () => {
+        if (xhr.status === 200) {
+            try {
+                const res = JSON.parse(xhr.responseText);
+                uploadedVideoName = res.filename;
+                
+                DOM.highlightsUploadProgressContainer.style.display = 'none';
+                DOM.highlightsFileInfo.style.display = 'flex';
+                DOM.highlightsFilename.textContent = file.name;
+                
+                const mb = (file.size / (1024 * 1024)).toFixed(1);
+                DOM.highlightsFilesize.textContent = mb + " MB";
+                
+                DOM.highlightsSettingsCard.style.display = 'block';
+                showToast('Video uploaded successfully!', 'ok');
+            } catch (err) {
+                showToast('Upload parsed error: ' + err, 'err');
+                resetHighlightsUploadState();
+            }
+        } else {
+            showToast('Failed to upload video.', 'err');
+            resetHighlightsUploadState();
+        }
+    };
+    
+    xhr.onerror = () => {
+        showToast('Upload error occurred.', 'err');
+        resetHighlightsUploadState();
+    };
+    
+    xhr.send(formData);
+}
+
+function resetHighlightsUploadState() {
+    uploadedVideoName = "";
+    DOM.highlightsUploadZone.style.display = 'block';
+    DOM.highlightsUploadProgressContainer.style.display = 'none';
+    DOM.highlightsFileInfo.style.display = 'none';
+    DOM.highlightsSettingsCard.style.display = 'none';
+    if (DOM.highlightsFileInput) DOM.highlightsFileInput.value = "";
+}
+
+async function triggerHighlightsExtraction() {
+    if (!uploadedVideoName) {
+        showToast('Please upload a video first.', 'err');
+        return;
+    }
+    
+    const durationVal = DOM.highlightsClipDurationInput ? parseInt(DOM.highlightsClipDurationInput.value) : 30;
+    if (isNaN(durationVal) || durationVal < 15 || durationVal > 60) {
+        showToast('Please enter a target clip duration between 15s and 60s.', 'err');
+        DOM.btnExtractHighlights.disabled = false;
+        DOM.btnExtractHighlights.textContent = '⚡ Extract Viral Highlights';
+        return;
+    }
+
+    DOM.btnExtractHighlights.disabled = true;
+    DOM.btnExtractHighlights.textContent = '⚡ Running Extraction...';
+    
+    const payload = {
+        video_name: uploadedVideoName,
+        clip_count: parseInt(DOM.highlightsClipCountSlider.value),
+        clip_duration: durationVal
+    };
+    
+    const res = await apiFetch('/api/highlights/extract', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    });
+    
+    if (res && res.ok) {
+        showToast('Highlight extraction started in the background.', 'ok');
+        DOM.highlightsStatusCard.style.display = 'block';
+        connectHighlightsSSE();
+    } else {
+        showToast(res ? res.error : 'Failed to start highlights extraction', 'err');
+        DOM.btnExtractHighlights.disabled = false;
+        DOM.btnExtractHighlights.textContent = '⚡ Extract Viral Highlights';
+    }
+}
+
+let highlightsSseSource = null;
+
+function connectHighlightsSSE() {
+    if (highlightsSseSource) {
+        highlightsSseSource.close();
+    }
+    
+    highlightsSseSource = new EventSource('/api/highlights/events');
+    
+    highlightsSseSource.addEventListener('progress', (e) => {
+        try {
+            const data = JSON.parse(e.data);
+            
+            if (data.running) {
+                DOM.highlightsStatusCard.style.display = 'block';
+                DOM.btnExtractHighlights.disabled = true;
+                DOM.btnExtractHighlights.textContent = '⚡ Running Extraction...';
+                
+                // Map status to progress bar percentage
+                let pct = 5;
+                if (data.status === 'extracting_audio') pct = 15;
+                else if (data.status === 'transcribing') pct = 40;
+                else if (data.status === 'analyzing') pct = 70;
+                else if (data.status === 'clipping') {
+                    const base = 70;
+                    if (data.total > 0) {
+                        pct = base + Math.round((data.current / data.total) * 30);
+                    } else {
+                        pct = 85;
+                    }
+                }
+                
+                DOM.highlightsProgressFill.style.width = pct + "%";
+                DOM.highlightsStatusMsg.textContent = data.message;
+                DOM.highlightsStatusDetail.textContent = data.total > 0 ? `Clip ${data.current}/${data.total}` : '';
+            } else {
+                DOM.highlightsStatusCard.style.display = 'none';
+                DOM.btnExtractHighlights.disabled = false;
+                DOM.btnExtractHighlights.textContent = '⚡ Extract Viral Highlights';
+                
+                if (data.status === 'done') {
+                    showToast(data.message || 'Highlight extraction complete!', 'ok');
+                    resetHighlightsUploadState();
+                    refreshHighlightsList();
+                } else if (data.status === 'error') {
+                    showToast(data.message || 'Highlight extraction failed.', 'err');
+                }
+                
+                highlightsSseSource.close();
+                highlightsSseSource = null;
+            }
+        } catch (err) {
+            console.error('Highlights SSE parse error:', err);
+        }
+    });
+    
+    highlightsSseSource.onerror = () => {
+        if (highlightsSseSource) {
+            highlightsSseSource.close();
+            highlightsSseSource = null;
+        }
+    };
+}
+
+async function refreshHighlightsList() {
+    const res = await apiFetch('/api/highlights/list');
+    if (!res || !res.clips) return;
+    
+    const container = DOM.highlightsClipsGrid;
+    const emptyState = DOM.highlightsEmptyState;
+    const countLabel = DOM.highlightsCountLbl;
+    
+    countLabel.textContent = `${res.clips.length} clip${res.clips.length === 1 ? '' : 's'} saved locally`;
+    
+    if (res.clips.length === 0) {
+        container.style.display = 'none';
+        emptyState.style.display = 'flex';
+        container.innerHTML = "";
+        return;
+    }
+    
+    container.style.display = 'flex';
+    emptyState.style.display = 'none';
+    
+    // Sort clips to show newest first
+    const sortedClips = [...res.clips].reverse();
+    
+    container.innerHTML = sortedClips.map((clip, idx) => {
+        const streamUrl = `/api/highlights/stream/${clip.filename}`;
+        return `
+            <div class="highlight-clip-card" data-filename="${clip.filename}">
+                <div class="highlight-clip-card-header">
+                    <div>
+                        <div class="highlight-clip-card-title">🔥 ${clip.title}</div>
+                        <div class="highlight-clip-card-meta">
+                            <span>Duration: <strong>${clip.duration.toFixed(1)}s</strong></span> &nbsp;•&nbsp; 
+                            <span>Created: ${clip.created || 'N/A'}</span>
+                        </div>
+                    </div>
+                    <button class="btn btn-danger" onclick="deleteHighlightClip('${clip.filename}')" style="padding:4px 8px; font-size:0.75rem; background:rgba(255, 74, 74, 0.15); border-color:#ff4a4a; color:#ff4a4a;">Delete</button>
+                </div>
+                
+                <div class="highlight-clip-card-reason">
+                    ${clip.reason}
+                </div>
+                
+                <div class="highlight-video-wrapper">
+                    <video controls src="${streamUrl}" preload="none"></video>
+                </div>
+                
+                <div class="highlight-clip-card-actions">
+                    <a href="${streamUrl}" download="${clip.filename}" class="btn btn-primary" style="padding:6px 12px; font-size:0.8rem; text-decoration:none; display:inline-flex; align-items:center; gap:6px; background:var(--primary); color:#fff; border-radius:6px; font-weight: 600;">📥 Download Clip</a>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+async function deleteHighlightClip(filename) {
+    if (!confirm('Are you sure you want to delete this highlight clip?')) return;
+    
+    const res = await apiFetch('/api/highlights/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: filename })
+    });
+    
+    if (res && res.ok) {
+        showToast('Clip deleted successfully.', 'ok');
+        refreshHighlightsList();
+    } else {
+        showToast('Failed to delete clip.', 'err');
+    }
+}
+
+// Expose delete function globally for inline html onclick listeners
+window.deleteHighlightClip = deleteHighlightClip;

@@ -185,6 +185,44 @@ def _update_state(**kwargs):
     })
 
 
+# Highlights extraction state
+_highlights_state = {
+    "running": False,
+    "status": "idle",      # idle | extracting_audio | transcribing | analyzing | clipping | done | error
+    "message": "",
+    "current": 0,
+    "total": 0,
+    "clips": []
+}
+
+_highlights_sse_subscribers: list[asyncio.Queue] = []
+
+def _broadcast_highlights(event: str, data: dict):
+    """Push an event to all highlights SSE subscribers."""
+    msg = f"event: {event}\ndata: {json.dumps(data)}\n\n"
+    dead = []
+    for q in _highlights_sse_subscribers:
+        try:
+            q.put_nowait(msg)
+        except Exception:
+            dead.append(q)
+    for q in dead:
+        if q in _highlights_sse_subscribers:
+            _highlights_sse_subscribers.remove(q)
+
+def _update_highlights_state(**kwargs):
+    """Update highlight clipping state and broadcast to SSE."""
+    _highlights_state.update(kwargs)
+    _broadcast_highlights("progress", {
+        "running": _highlights_state["running"],
+        "status": _highlights_state["status"],
+        "message": _highlights_state["message"],
+        "current": _highlights_state["current"],
+        "total": _highlights_state["total"],
+        "clips": _highlights_state["clips"],
+    })
+
+
 # ── Routes: Dashboard ────────────────────────────────────────
 
 
@@ -1560,6 +1598,215 @@ async def clear_video_outputs():
         "running": False, "status": "idle", "message": "",
         "current_chunk": 0, "total_chunks": 0, "segments_done": [],
     })
+    return {"ok": True}
+
+
+# ── Highlights extraction background worker and APIs ─────────
+
+async def _run_highlights_worker(video_path: str, clip_count: int, clip_duration: int = 30):
+    global _highlights_worker_process, _highlights_state
+
+    # Write config JSON
+    config_path = os.path.join("outputs", ".highlights_config.json")
+    os.makedirs("outputs", exist_ok=True)
+
+    worker_cfg = {
+        "video_path": video_path,
+        "clip_count": clip_count,
+        "clip_duration": clip_duration,
+        "groq_keys": getattr(config, "GROQ_API_KEYS", []),
+        "highlights_dir": "outputs/highlights"
+    }
+    with open(config_path, "w", encoding="utf-8") as f:
+        json.dump(worker_cfg, f)
+
+    try:
+        python = sys.executable
+        _highlights_worker_process = await asyncio.create_subprocess_exec(
+            python, "core/highlights_worker.py", config_path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=None,
+            cwd=os.getcwd()
+        )
+
+        _update_highlights_state(running=True, status="extracting_audio", message="Extracting audio track from video...", clips=[])
+
+        while True:
+            line = await _highlights_worker_process.stdout.readline()
+            if not line:
+                break
+
+            line = line.decode("utf-8", errors="replace").strip()
+            if not line:
+                continue
+
+            try:
+                data = json.loads(line)
+                event = data.get("event", "")
+
+                if event == "status":
+                    _update_highlights_state(
+                        status=data.get("status", _highlights_state["status"]),
+                        message=data.get("message", _highlights_state["message"]),
+                        current=data.get("current", _highlights_state["current"]),
+                        total=data.get("total", _highlights_state["total"])
+                    )
+                elif event == "done":
+                    _update_highlights_state(
+                        running=False,
+                        status="done",
+                        message=data.get("message", "Highlights generated!"),
+                        clips=data.get("clips", [])
+                    )
+                    break
+                elif event == "error":
+                    _update_highlights_state(
+                        running=False,
+                        status="error",
+                        message=data.get("message", "Highlight extraction failed")
+                    )
+                    break
+            except Exception:
+                pass
+
+        await _highlights_worker_process.wait()
+
+    except Exception as e:
+        _update_highlights_state(running=False, status="error", message=f"Failed to start highlights worker: {e}")
+    finally:
+        _highlights_worker_process = None
+
+
+@app.post("/api/highlights/upload")
+async def upload_highlights_video(file: UploadFile = File(...)):
+    uploads_dir = Path("outputs/highlights/uploads")
+    os.makedirs(uploads_dir, exist_ok=True)
+
+    safe_filename = "".join(c for c in file.filename if c.isalnum() or c in "._-").strip()
+    if not safe_filename:
+        safe_filename = f"upload_{int(time.time())}.mp4"
+
+    dest_path = uploads_dir / safe_filename
+
+    with open(dest_path, "wb") as buffer:
+        while chunk := await file.read(1024 * 1024):
+            buffer.write(chunk)
+
+    return {"ok": True, "filename": safe_filename, "path": str(dest_path)}
+
+
+@app.post("/api/highlights/extract")
+async def extract_highlights(request: Request):
+    global _highlights_state, _highlights_worker_process
+
+    if _highlights_state["running"]:
+        return JSONResponse({"ok": False, "error": "Highlight extraction task is already running"}, 400)
+
+    data = await request.json()
+    video_name = data.get("video_name", "")
+    clip_count = int(data.get("clip_count", 3))
+    clip_duration = int(data.get("clip_duration", 30))
+
+    uploads_dir = Path("outputs/highlights/uploads")
+    video_path = uploads_dir / video_name
+
+    if not video_name or not os.path.exists(video_path):
+        return JSONResponse({"ok": False, "error": "Uploaded video file not found"}, 404)
+
+    _update_highlights_state(
+        running=True,
+        status="starting",
+        message="Initializing highlights extraction process...",
+        current=0,
+        total=0,
+        clips=[]
+    )
+
+    asyncio.create_task(_run_highlights_worker(str(video_path), clip_count, clip_duration))
+    return {"ok": True}
+
+
+@app.get("/api/highlights/events")
+async def highlights_events_sse(request: Request):
+    queue = asyncio.Queue()
+    _highlights_sse_subscribers.append(queue)
+
+    async def event_stream():
+        snapshot = {k: _highlights_state[k] for k in ["running", "status", "message", "current", "total", "clips"]}
+        yield f"event: progress\ndata: {json.dumps(snapshot)}\n\n"
+
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    msg = await asyncio.wait_for(queue.get(), timeout=15.0)
+                    yield msg
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+        finally:
+            if queue in _highlights_sse_subscribers:
+                _highlights_sse_subscribers.remove(queue)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+
+@app.get("/api/highlights/list")
+async def list_highlights():
+    h_dir = Path("outputs/highlights")
+    if not h_dir.exists():
+        return {"clips": []}
+
+    clips = []
+    for p in sorted(h_dir.glob("*.json")):
+        if p.name == ".worker_config.json" or p.name == ".highlights_config.json":
+            continue
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                clips.append(json.load(f))
+        except Exception:
+            pass
+    return {"clips": clips}
+
+
+@app.get("/api/highlights/stream/{clip_name}")
+async def stream_highlight_video(clip_name: str):
+    clip_path = Path("outputs/highlights") / clip_name
+    if not clip_path.exists():
+        return JSONResponse({"error": "Clip file not found"}, status_code=404)
+    return FileResponse(clip_path, media_type="video/mp4")
+
+
+@app.post("/api/highlights/delete")
+async def delete_highlight_clip(request: Request):
+    data = await request.json()
+    filename = data.get("filename", "")
+    if not filename:
+        return JSONResponse({"ok": False, "error": "Filename required"}, 400)
+
+    h_dir = Path("outputs/highlights")
+    video_file = h_dir / filename
+    json_file = h_dir / f"{os.path.splitext(filename)[0]}.json"
+
+    if video_file.exists():
+        try:
+            os.remove(video_file)
+        except Exception:
+            pass
+    if json_file.exists():
+        try:
+            os.remove(json_file)
+        except Exception:
+            pass
+
     return {"ok": True}
 
 

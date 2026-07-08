@@ -2788,3 +2788,121 @@ input[type="range"]::-webkit-slider-thumb:hover {
   margin-top: 4px;
 }
 
+
+/* ── Highlights Mode Layout Override ── */
+#app-layout.highlights-mode {
+  grid-template-columns: 1fr !important;
+}
+#app-layout.highlights-mode #sidebar,
+#app-layout.highlights-mode #right-console {
+  display: none !important;
+}
+
+#app-layout.highlights-mode #workspace {
+  grid-column: span 3;
+  width: 100vw;
+  max-width: 100vw;
+}
+
+/* Drag and Drop Zone states */
+#highlights-upload-zone.dragover {
+  border-color: var(--primary) !important;
+  background: rgba(124, 157, 255, 0.08) !important;
+  box-shadow: 0 0 20px rgba(124, 157, 255, 0.15);
+}
+
+/* Highlight Clip Cards styling */
+.highlight-clip-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  transition: all 0.25s ease;
+}
+.highlight-clip-card:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.15);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  transform: translateY(-2px);
+}
+
+.highlight-clip-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.highlight-clip-card-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #fff;
+  line-height: 1.4;
+}
+
+.highlight-clip-card-meta {
+  font-size: 0.72rem;
+  color: rgba(255, 255, 255, 0.4);
+  margin-top: 2px;
+}
+
+.highlight-clip-card-reason {
+  font-size: 0.82rem;
+  color: rgba(255, 255, 255, 0.7);
+  line-height: 1.45;
+  background: rgba(0, 0, 0, 0.15);
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.highlight-clip-card-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-top: 4px;
+}
+
+.highlight-video-wrapper {
+  position: relative;
+  width: 100%;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #000;
+  border: 1px solid rgba(255,255,255,0.05);
+  aspect-ratio: 16/9; /* default aspect ratio, can adapt */
+}
+
+.highlight-video-wrapper video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.pulsing-red-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ff4a4a;
+  box-shadow: 0 0 0 0 rgba(255, 74, 74, 0.7);
+  animation: pulse-red 1.6s infinite;
+}
+
+@keyframes pulse-red {
+  0% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(255, 74, 74, 0.7);
+  }
+  70% {
+    transform: scale(1);
+    box-shadow: 0 0 0 10px rgba(255, 74, 74, 0);
+  }
+  100% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(255, 74, 74, 0);
+  }
+}
+
